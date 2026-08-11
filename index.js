@@ -46,8 +46,7 @@ const client = new Client({
 const games = [
     { name: "Đếm số", value: "demso" },
     { name: "Nối từ", value: "noitu" },
-    { name: "Ma Sói", value: "masoi" },
-    { name: "Tù xì", value: "tuxi" }
+    { name: "Ma Sói", value: "masoi" }
 ];
 
 const GAME_MASTERS = new Set([
@@ -100,18 +99,21 @@ const commands = [
                 .setRequired(true)
                 .addChoices(...games)
         )
+    new SlashCommandBuilder()
+        .setName("backup")
+        .setDescription("Lưu tạm trạng thái các game đang chạy")
 ];
 
 async function initDatabase() {
     await pool.query(`
-        CREATE TABLE IF NOT EXISTS game_configs (
+        CREATE TABLE IF NOT EXISTS game_backups (
             guild_id TEXT NOT NULL,
             game TEXT NOT NULL,
-            channel_id TEXT NOT NULL,
+            state JSONB NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (guild_id, game)
         )
     `);
-
     console.log("Database ready.");
 }
 
@@ -141,11 +143,14 @@ async function startGame(game, guildId, channelId) {
         return false;
     }
 
-    const session = {
-        game,
-        guildId,
-        channelId
-    };
+const session = {
+    game,
+    guildId,
+    channelId,
+
+    currentNumber: 0,
+    lastUserId: null
+};
 
     activeGames.set(key, session);
 
@@ -159,12 +164,45 @@ async function startGame(game, guildId, channelId) {
 
 function stopGame(guildId, game) {
     const key = `${guildId}:${game}`;
+    const session = activeGames.get(key);
 
-    if (!activeGames.has(key)) {
+    if (!session) {
         return false;
     }
 
+    if (session.messageHandler) {
+        client.off("messageCreate", session.messageHandler);
+    }
+
     activeGames.delete(key);
+
+    return true;
+}
+
+async function backupGame(guildId, game) {
+    const key = `${guildId}:${game}`;
+    const session = activeGames.get(key);
+
+    if (!session) {
+        return false;
+    }
+
+    await pool.query(
+        `
+        INSERT INTO game_backups (guild_id, game, state)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id, game)
+        DO UPDATE SET
+            state = EXCLUDED.state,
+            created_at = NOW()
+        `,
+        [
+            guildId,
+            game,
+            JSON.stringify(session)
+        ]
+    );
+
     return true;
 }
 
@@ -195,10 +233,76 @@ const gameFunctions = {
     demso: startDemSo,
     noitu: startNoiTu,
     masoi: startMaSoi,
-    tuxi: startTuXi
 };
 
 async function startDemSo(session) {
+    const channel = await client.channels.fetch(session.channelId);
+
+    if (!channel) {
+        throw new Error("Không tìm thấy kênh Đếm số.");
+    }
+
+    session.currentNumber = 0;
+    session.lastUserId = null;
+
+    const messageHandler = async message => {
+        // Chỉ nhận tin nhắn trong đúng channel
+        if (message.channelId !== session.channelId) return;
+
+        // Bỏ qua bot
+        if (message.author.bot) return;
+
+        // Chỉ nhận số nguyên
+        if (!/^\d+$/.test(message.content.trim())) return;
+
+        const number = Number(message.content.trim());
+
+        // Không được chơi 2 lượt liên tiếp
+        if (message.author.id === session.lastUserId) {
+            await message.react("❌").catch(() => {});
+
+            await message.reply(
+                "Bạn không được chơi 2 lượt liên tiếp!\n🔄 Game đã reset về 0."
+            ).catch(() => {});
+
+            session.currentNumber = 0;
+            session.lastUserId = null;
+
+            return;
+        }
+
+        // Phải đúng số tiếp theo
+        if (number !== session.currentNumber + 1) {
+            await message.react("❌").catch(() => {});
+
+            await message.reply(
+                `Sai! Số tiếp theo phải là **${session.currentNumber + 1}**.\n` +
+                `Game đã reset về **0**.`
+            ).catch(() => {});
+
+            session.currentNumber = 0;
+            session.lastUserId = null;
+
+            return;
+        }
+
+        // Đúng
+        session.currentNumber = number;
+        session.lastUserId = message.author.id;
+
+        await message.react("✅").catch(() => {});
+    };
+
+    session.messageHandler = messageHandler;
+
+    client.on("messageCreate", messageHandler);
+
+    // Báo bắt đầu
+    await channel.send(
+        "**Đếm số bắt đầu!**\n" +
+        "Số hiện tại: **0**\n" +
+        "Hãy gửi **1**!"
+    );
 }
 
 async function startNoiTu(session) {
@@ -207,8 +311,6 @@ async function startNoiTu(session) {
 async function startMaSoi(session) {
 }
 
-async function startTuXi(session) {
-}
 
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
@@ -258,12 +360,26 @@ client.on("interactionCreate", async interaction => {
                 ephemeral: true
             });
         }
+    
         const game = interaction.options.getString("game");
-        const config = await getGameConfig(interaction.guildId, game);
+    
+        const config = await getGameConfig(
+            interaction.guildId,
+            game
+        );
     
         if (!config) {
             return interaction.reply({
                 content: "Game này chưa được setup.",
+                ephemeral: true
+            });
+        }
+    
+        const key = `${interaction.guildId}:${game}`;
+    
+        if (activeGames.has(key)) {
+            return interaction.reply({
+                content: "Game này đang chạy rồi.",
                 ephemeral: true
             });
         }
@@ -276,13 +392,19 @@ client.on("interactionCreate", async interaction => {
     
         if (!started) {
             return interaction.reply({
-                content: "Game này đang chạy hoặc không tồn tại.",
+                content: "Không thể bắt đầu game.",
                 ephemeral: true
             });
         }
     
+        const gameNames = {
+            demso: "Đếm số",
+            noitu: "Nối từ",
+            masoi: "Ma Sói"
+        };
+    
         return interaction.reply({
-            content: `Đã bắt đầu ${game}.`,
+            content: `Đã bật **${gameNames[game] || game}** tại <#${config.channel_id}>.`,
             ephemeral: true
         });
     }
@@ -323,6 +445,52 @@ client.on("interactionCreate", async interaction => {
             content: `Đã khởi động lại ${game}.`,
             ephemeral: true
         });
+    }
+    if (interaction.commandName === "backup") {
+        if (!isGameMaster(interaction.user.id)) {
+            return interaction.reply({
+                content: "Bạn không có quyền sử dụng lệnh này.",
+                ephemeral: true
+            });
+        }
+    
+        const gamesToBackup = ["demso", "noitu"];
+        const backedUp = [];
+    
+        try {
+            for (const game of gamesToBackup) {
+                const success = await backupGame(
+                    interaction.guildId,
+                    game
+                );
+    
+                if (success) {
+                    backedUp.push(game);
+                }
+            }
+    
+            if (backedUp.length === 0) {
+                return interaction.reply({
+                    content: "Không có game Đếm số hoặc Nối từ nào đang chạy.",
+                    ephemeral: true
+                });
+            }
+    
+            return interaction.reply({
+                content:
+                    `💾 Đã backup: ${backedUp.join(", ")}.\n` +
+                    `Trạng thái đã được lưu tạm vào database.`,
+                ephemeral: true
+            });
+    
+        } catch (error) {
+            console.error("Backup failed:", error);
+    
+            return interaction.reply({
+                content: "Không thể backup game.",
+                ephemeral: true
+            });
+        }
     }
 });
 
