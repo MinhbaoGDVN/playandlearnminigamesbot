@@ -51,15 +51,19 @@ const games = [
 ];
 
 const GAME_MASTERS = new Set([
-    "ID_DICI_05",
-    "ID_HETHONG_PLAYANDLEARN",
+    "1003155311084978266",
+    "1504862059232366818",
+    "1422193218006679745",
 ]);
+
+function isGameMaster(userId) {
+    return GAME_MASTERS.has(userId);
+}
 
 const commands = [
     new SlashCommandBuilder()
         .setName("setup")
         .setDescription("Thiết lập game")
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addStringOption(option =>
             option
                 .setName("game")
@@ -77,7 +81,6 @@ const commands = [
     new SlashCommandBuilder()
         .setName("start")
         .setDescription("Bắt đầu game")
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addStringOption(option =>
             option
                 .setName("game")
@@ -89,7 +92,6 @@ const commands = [
     new SlashCommandBuilder()
         .setName("restart")
         .setDescription("Khởi động lại game")
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addStringOption(option =>
             option
                 .setName("game")
