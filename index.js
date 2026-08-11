@@ -459,9 +459,7 @@ async function startNoiTu(session) {
         session.usedWords.add(startingPhrase);
 
         await channel.send(
-            `Nối từ bắt đầu.\n` +
-            `Bot: **${startingPhrase}**\n` +
-            `Hãy nối với từ **${getLastWord(startingPhrase)}**.`
+            `Bắt đầu bằng từ: **${startingPhrase}**`
         );
     }
 
@@ -477,7 +475,7 @@ async function startNoiTu(session) {
             );
 
             await channel.send(
-                "⚠️ Không thể bắt đầu lại Nối từ."
+                "Không thể bắt đầu lại Nối từ."
             ).catch(() => {});
         }
     }
@@ -703,52 +701,6 @@ client.on("interactionCreate", async interaction => {
             content: `Đã khởi động lại ${game}.`,
             ephemeral: true
         });
-    }
-    if (interaction.commandName === "backup") {
-        if (!isGameMaster(interaction.user.id)) {
-            return interaction.reply({
-                content: "Bạn không có quyền sử dụng lệnh này.",
-                ephemeral: true
-            });
-        }
-    
-        const gamesToBackup = ["demso", "noitu"];
-        const backedUp = [];
-    
-        try {
-            for (const game of gamesToBackup) {
-                const success = await backupGame(
-                    interaction.guildId,
-                    game
-                );
-    
-                if (success) {
-                    backedUp.push(game);
-                }
-            }
-    
-            if (backedUp.length === 0) {
-                return interaction.reply({
-                    content: "Không có game Đếm số hoặc Nối từ nào đang chạy.",
-                    ephemeral: true
-                });
-            }
-    
-            return interaction.reply({
-                content:
-                    `💾 Đã backup: ${backedUp.join(", ")}.\n` +
-                    `Trạng thái đã được lưu tạm vào database.`,
-                ephemeral: true
-            });
-    
-        } catch (error) {
-            console.error("Backup failed:", error);
-    
-            return interaction.reply({
-                content: "Không thể backup game.",
-                ephemeral: true
-            });
-        }
     }
 });
 
