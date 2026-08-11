@@ -305,60 +305,265 @@ async function startDemSo(session) {
     );
 }
 
-async function checkVietnameseWord(word) {
-    const normalized = word
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, " ");
+async function startNoiTu(session) {
+    const channel = await client.channels.fetch(session.channelId);
 
-    if (session.wordCache.has(normalized)) {
-        return session.wordCache.get(normalized);
+    if (!channel) {
+        throw new Error("Không tìm thấy kênh Nối từ.");
     }
 
-    const apis = [
-        `https://dict.minhqnd.com/api/v1/lookup?word=${encodeURIComponent(normalized)}&lang=vi`,
-        `https://botudien.pythonanywhere.com/api/lookup?word=${encodeURIComponent(normalized)}`
+    session.currentPhrase = null;
+    session.usedWords = new Set();
+    session.wordCache = new Map();
+
+    const dictionaryApis = [
+        word =>
+            `https://dict.minhqnd.com/api/v1/lookup?word=${encodeURIComponent(word)}&lang=vi`,
+
+        word =>
+            `https://botudien.pythonanywhere.com/api/lookup?word=${encodeURIComponent(word)}`
     ];
 
-    let hasApiError = false;
-
-    for (const url of apis) {
-        try {
-            const controller = new AbortController();
-
-            const timeout = setTimeout(() => {
-                controller.abort();
-            }, 5000);
-
-            const response = await fetch(url, {
-                signal: controller.signal
-            });
-
-            clearTimeout(timeout);
-
-            if (response.status === 200) {
-                session.wordCache.set(normalized, true);
-                return true;
-            }
-
-            if (response.status === 404) {
-                continue;
-            }
-
-            hasApiError = true;
-
-        } catch (error) {
-            console.error(`Dictionary API error: ${url}`, error);
-            hasApiError = true;
-        }
+    function normalizePhrase(text) {
+        return text
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, " ");
     }
 
-    if (hasApiError) {
+    function getFirstWord(phrase) {
+        return phrase.split(" ")[0];
+    }
+
+    function getLastWord(phrase) {
+        const words = phrase.split(" ");
+        return words[words.length - 1];
+    }
+
+    async function checkVietnameseWord(word) {
+        const normalized = normalizePhrase(word);
+
+        if (session.wordCache.has(normalized)) {
+            return session.wordCache.get(normalized);
+        }
+
+        let hasWorkingApi = false;
+
+        for (const createUrl of dictionaryApis) {
+            const url = createUrl(normalized);
+
+            try {
+                const controller = new AbortController();
+
+                const timeout = setTimeout(() => {
+                    controller.abort();
+                }, 5000);
+
+                let response;
+
+                try {
+                    response = await fetch(url, {
+                        signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeout);
+                }
+
+                if (response.status === 200) {
+                    session.wordCache.set(normalized, true);
+                    return true;
+                }
+
+                if (response.status === 404) {
+                    hasWorkingApi = true;
+                    continue;
+                }
+
+                console.error(
+                    `Dictionary API returned ${response.status}: ${url}`
+                );
+
+            } catch (error) {
+                console.error(
+                    `Dictionary API error: ${url}`,
+                    error.message
+                );
+            }
+        }
+
+        if (hasWorkingApi) {
+            session.wordCache.set(normalized, false);
+            return false;
+        }
+
         return null;
     }
 
-    session.wordCache.set(normalized, false);
-    return false;
+    const startingPhrases = [
+        "học sinh",
+        "sinh viên",
+        "thời gian",
+        "gia đình",
+        "đất nước",
+        "con người",
+        "máy tính",
+        "trường học",
+        "công việc",
+        "cuộc sống",
+        "Việt Nam",
+        "thành phố",
+        "bạn bè",
+        "mạng xã hội",
+        "trò chơi",
+        "âm nhạc",
+        "bóng đá",
+        "điện thoại",
+        "công nghệ",
+        "phần mềm"
+    ];
+
+    async function chooseStartingPhrase() {
+        const shuffled = [...startingPhrases]
+            .sort(() => Math.random() - 0.5);
+
+        for (const phrase of shuffled) {
+            const normalized = normalizePhrase(phrase);
+
+            if (session.usedWords.has(normalized)) {
+                continue;
+            }
+
+            const valid = await checkVietnameseWord(normalized);
+
+            if (valid === true) {
+                return normalized;
+            }
+        }
+
+        return null;
+    }
+
+    async function startRound() {
+        session.currentPhrase = null;
+        session.usedWords.clear();
+
+        const startingPhrase = await chooseStartingPhrase();
+
+        if (!startingPhrase) {
+            throw new Error(
+                "Không tìm được cụm từ mở đầu hợp lệ."
+            );
+        }
+
+        session.currentPhrase = startingPhrase;
+        session.usedWords.add(startingPhrase);
+
+        await channel.send(
+            `Nối từ bắt đầu.\n` +
+            `Bot: **${startingPhrase}**\n` +
+            `Hãy nối với từ **${getLastWord(startingPhrase)}**.`
+        );
+    }
+
+    async function resetRound(reason) {
+        await channel.send(reason).catch(() => {});
+
+        try {
+            await startRound();
+        } catch (error) {
+            console.error(
+                "Không thể bắt đầu lại Nối từ:",
+                error
+            );
+
+            await channel.send(
+                "⚠️ Không thể bắt đầu lại Nối từ."
+            ).catch(() => {});
+        }
+    }
+
+    const messageHandler = async message => {
+        if (message.channelId !== session.channelId) return;
+        if (message.author.bot) return;
+
+        const phrase = normalizePhrase(message.content);
+
+        if (!phrase) return;
+
+        if (phrase.length > 100) return;
+
+        const words = phrase.split(" ");
+
+        if (words.length < 2) return;
+
+        if (session.usedWords.has(phrase)) {
+            await message.react("❌").catch(() => {});
+
+            await resetRound(
+                "Cụm từ này đã được sử dụng.\n" +
+                "Game đang bắt đầu lại."
+            );
+
+            return;
+        }
+
+        const requiredWord = getLastWord(
+            session.currentPhrase
+        );
+
+        const firstWord = getFirstWord(phrase);
+
+        if (firstWord !== requiredWord) {
+            await message.react("❌").catch(() => {});
+
+            await resetRound(
+                `Sai rồi. Cụm từ phải bắt đầu bằng **${requiredWord}**.\n` +
+                "Game đang bắt đầu lại."
+            );
+
+            return;
+        }
+
+        const valid = await checkVietnameseWord(phrase);
+
+        if (valid === null) {
+            await message.react("⚠️").catch(() => {});
+
+            await message.reply(
+                "Không thể kết nối tới các từ điển lúc này. Hãy thử lại."
+            ).catch(() => {});
+
+            return;
+        }
+
+        if (valid === false) {
+            await message.react("❌").catch(() => {});
+
+            await resetRound(
+                `Cụm từ **${phrase}** không được tìm thấy trong các từ điển.\n` +
+                "Game đang bắt đầu lại."
+            );
+
+            return;
+        }
+
+        session.currentPhrase = phrase;
+        session.usedWords.add(phrase);
+
+        await message.react("✅").catch(() => {});
+    };
+
+    session.messageHandler = messageHandler;
+
+    client.on("messageCreate", messageHandler);
+
+    try {
+        await startRound();
+    } catch (error) {
+        client.off("messageCreate", messageHandler);
+        session.messageHandler = null;
+        throw error;
+    }
 }
 
 async function startMaSoi(session) {
