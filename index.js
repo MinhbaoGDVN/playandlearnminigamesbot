@@ -177,6 +177,23 @@ client.on("interactionCreate", async interaction => {
     }
 
     if (interaction.commandName === "start") {
+        const game = interaction.options.getString("game");
+        const config = await getGameConfig(interaction.guildId, game);
+    
+        if (!config) {
+            return interaction.reply({
+                content: "Game này chưa được setup.",
+                ephemeral: true
+            });
+        }
+    
+        const channel = await interaction.guild.channels.fetch(config.channel_id);
+    
+        await interaction.reply({
+            content: `Đã tìm thấy kênh ${channel}.`,
+            ephemeral: true
+        });
+    
         return;
     }
 
