@@ -15,6 +15,15 @@ const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const DATABASE_URL = process.env.DATABASE_URL;
 
+const http = require("http");
+
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end("Minigames Bot is running.");
+}).listen(PORT);
+
 const pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: {
