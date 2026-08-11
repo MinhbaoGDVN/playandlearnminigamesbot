@@ -6,7 +6,8 @@ const {
     SlashCommandBuilder,
     REST,
     Routes,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    ChannelType
 } = require("discord.js");
 
 const { Pool } = require("pg");
@@ -41,12 +42,18 @@ const client = new Client({
     ]
 });
 
+
 const games = [
     { name: "Đếm số", value: "demso" },
     { name: "Nối từ", value: "noitu" },
     { name: "Ma Sói", value: "masoi" },
     { name: "Tù xì", value: "tuxi" }
 ];
+
+const GAME_MASTERS = new Set([
+    "ID_DICI_05",
+    "ID_HETHONG_PLAYANDLEARN",
+]);
 
 const commands = [
     new SlashCommandBuilder()
@@ -65,8 +72,8 @@ const commands = [
                 .setName("in")
                 .setDescription("Kênh chơi game")
                 .setRequired(true)
+                .addChannelTypes(ChannelType.GuildText)
         ),
-
     new SlashCommandBuilder()
         .setName("start")
         .setDescription("Bắt đầu game")
@@ -118,6 +125,46 @@ async function getGameConfig(guildId, game) {
     return result.rows[0] || null;
 }
 
+async function startGame(game, guildId, channelId) {
+    const key = `${guildId}:${game}`;
+
+    if (activeGames.has(key)) {
+        return false;
+    }
+
+    const gameFunction = gameFunctions[game];
+
+    if (!gameFunction) {
+        return false;
+    }
+
+    const session = {
+        game,
+        guildId,
+        channelId
+    };
+
+    activeGames.set(key, session);
+
+    gameFunction(session).catch(error => {
+        console.error(`Game ${game} crashed:`, error);
+        activeGames.delete(key);
+    });
+
+    return true;
+}
+
+function stopGame(guildId, game) {
+    const key = `${guildId}:${game}`;
+
+    if (!activeGames.has(key)) {
+        return false;
+    }
+
+    activeGames.delete(key);
+    return true;
+}
+
 async function registerCommands() {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
@@ -141,10 +188,35 @@ client.once("ready", async () => {
     }
 });
 
+const gameFunctions = {
+    demso: startDemSo,
+    noitu: startNoiTu,
+    masoi: startMaSoi,
+    tuxi: startTuXi
+};
+
+async function startDemSo(session) {
+}
+
+async function startNoiTu(session) {
+}
+
+async function startMaSoi(session) {
+}
+
+async function startTuXi(session) {
+}
+
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === "setup") {
+        if (!isGameMaster(interaction.user.id)) {
+            return interaction.reply({
+                content: "Bạn không có quyền sử dụng lệnh này.",
+                ephemeral: true
+            });
+        }
         const game = interaction.options.getString("game");
         const channel = interaction.options.getChannel("in");
 
@@ -177,6 +249,12 @@ client.on("interactionCreate", async interaction => {
     }
 
     if (interaction.commandName === "start") {
+        if (!isGameMaster(interaction.user.id)) {
+            return interaction.reply({
+                content: "Bạn không có quyền sử dụng lệnh này.",
+                ephemeral: true
+            });
+        }
         const game = interaction.options.getString("game");
         const config = await getGameConfig(interaction.guildId, game);
     
@@ -187,18 +265,61 @@ client.on("interactionCreate", async interaction => {
             });
         }
     
-        const channel = await interaction.guild.channels.fetch(config.channel_id);
+        const started = await startGame(
+            game,
+            interaction.guildId,
+            config.channel_id
+        );
     
-        await interaction.reply({
-            content: `Đã tìm thấy kênh ${channel}.`,
+        if (!started) {
+            return interaction.reply({
+                content: "Game này đang chạy hoặc không tồn tại.",
+                ephemeral: true
+            });
+        }
+    
+        return interaction.reply({
+            content: `Đã bắt đầu ${game}.`,
             ephemeral: true
         });
-    
-        return;
     }
 
     if (interaction.commandName === "restart") {
-        return;
+        if (!isGameMaster(interaction.user.id)) {
+            return interaction.reply({
+                content: "Bạn không có quyền sử dụng lệnh này.",
+                ephemeral: true
+            });
+        }
+        const game = interaction.options.getString("game");
+        const config = await getGameConfig(interaction.guildId, game);
+    
+        if (!config) {
+            return interaction.reply({
+                content: "Game này chưa được setup.",
+                ephemeral: true
+            });
+        }
+    
+        stopGame(interaction.guildId, game);
+    
+        const started = await startGame(
+            game,
+            interaction.guildId,
+            config.channel_id
+        );
+    
+        if (!started) {
+            return interaction.reply({
+                content: "Không thể khởi động lại game.",
+                ephemeral: true
+            });
+        }
+    
+        return interaction.reply({
+            content: `Đã khởi động lại ${game}.`,
+            ephemeral: true
+        });
     }
 });
 
