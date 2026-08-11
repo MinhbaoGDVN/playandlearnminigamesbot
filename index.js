@@ -316,13 +316,15 @@ async function startNoiTu(session) {
     session.lastUserId = null;
     session.usedWords = new Set();
 
-    // Cache kết quả dictionary API trong RAM
     if (!session.wordCache) {
         session.wordCache = new Map();
     }
 
     async function checkVietnameseWord(word) {
-        const normalized = word.trim().toLowerCase();
+        const normalized = word
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, " ");
 
         if (session.wordCache.has(normalized)) {
             return session.wordCache.get(normalized);
@@ -347,7 +349,9 @@ async function startNoiTu(session) {
             clearTimeout(timeout);
 
             if (!response.ok) {
-                throw new Error(`Dictionary API returned ${response.status}`);
+                throw new Error(
+                    `Dictionary API returned ${response.status}`
+                );
             }
 
             const data = await response.json();
@@ -360,8 +364,6 @@ async function startNoiTu(session) {
 
         } catch (error) {
             console.error("Dictionary API error:", error);
-
-            // null = API lỗi, khác với false = từ không tồn tại
             return null;
         }
     }
@@ -382,10 +384,75 @@ async function startNoiTu(session) {
         return words[words.length - 1];
     }
 
-    function resetGame() {
+    const startingPhrases = [
+        "học sinh",
+        "sinh viên",
+        "thời gian",
+        "gia đình",
+        "đất nước",
+        "con người",
+        "máy tính",
+        "trường học",
+        "công việc",
+        "cuộc sống"
+    ];
+
+    async function chooseStartingPhrase() {
+        const shuffled = [...startingPhrases]
+            .sort(() => Math.random() - 0.5);
+
+        for (const phrase of shuffled) {
+            const normalized = normalizePhrase(phrase);
+
+            if (session.usedWords.has(normalized)) {
+                continue;
+            }
+
+            const valid = await checkVietnameseWord(normalized);
+
+            if (valid === true) {
+                return normalized;
+            }
+        }
+
+        return null;
+    }
+
+    async function startRound() {
         session.currentPhrase = null;
         session.lastUserId = null;
         session.usedWords.clear();
+
+        const startingPhrase = await chooseStartingPhrase();
+
+        if (!startingPhrase) {
+            throw new Error(
+                "Không tìm được cụm từ mở đầu hợp lệ."
+            );
+        }
+
+        session.currentPhrase = startingPhrase;
+        session.usedWords.add(startingPhrase);
+
+        await channel.send(
+            `Nối từ bắt đầu.\n` +
+            `Bot: **${startingPhrase}**\n` +
+            `Hãy nối với từ **${getLastWord(startingPhrase)}**.`
+        );
+    }
+
+    async function resetRound(reason) {
+        await channel.send(reason).catch(() => {});
+
+        try {
+            await startRound();
+        } catch (error) {
+            console.error("Failed to restart Nối từ:", error);
+
+            await channel.send(
+                "⚠️ Không thể bắt đầu lại Nối từ."
+            ).catch(() => {});
+        }
     }
 
     const messageHandler = async message => {
@@ -394,29 +461,24 @@ async function startNoiTu(session) {
 
         const phrase = normalizePhrase(message.content);
 
-        // Không nhận tin nhắn rỗng
         if (!phrase) return;
 
-        // Không cho cụm từ quá dài
         if (phrase.length > 100) return;
 
-        // Chỉ cho phép từ/cụm từ có ít nhất 2 tiếng
         const words = phrase.split(" ");
 
-        if (words.length < 2) {
-            return;
-        }
+        // Nối từ phải có ít nhất 2 tiếng
+        if (words.length < 2) return;
 
         // Không được chơi 2 lượt liên tiếp
         if (message.author.id === session.lastUserId) {
             await message.react("❌").catch(() => {});
 
-            await message.reply(
-                "Bạn không được chơi 2 lượt liên tiếp!\n" +
-                "Game đã reset."
-            ).catch(() => {});
+            await resetRound(
+                "Bạn không được chơi 2 lượt liên tiếp.\n" +
+                "Game đang bắt đầu lại."
+            );
 
-            resetGame();
             return;
         }
 
@@ -424,44 +486,38 @@ async function startNoiTu(session) {
         if (session.usedWords.has(phrase)) {
             await message.react("❌").catch(() => {});
 
-            await message.reply(
-                "Cụm từ này đã được sử dụng!\n" +
-                "Game đã reset."
-            ).catch(() => {});
+            await resetRound(
+                "Cụm từ này đã được sử dụng.\n" +
+                "Game đang bắt đầu lại."
+            );
 
-            resetGame();
             return;
         }
 
-        // Kiểm tra luật nối từ
-        if (session.currentPhrase !== null) {
-            const requiredWord = getLastWord(session.currentPhrase);
-            const firstWord = getFirstWord(phrase);
+        // Kiểm tra nối từ
+        const requiredWord = getLastWord(session.currentPhrase);
+        const firstWord = getFirstWord(phrase);
 
-            if (firstWord !== requiredWord) {
-                await message.react("❌").catch(() => {});
+        if (firstWord !== requiredWord) {
+            await message.react("❌").catch(() => {});
 
-                await message.reply(
-                    `Không nối được!\n` +
-                    `Từ tiếp theo phải bắt đầu bằng **${requiredWord}**.\n` +
-                    `Game đã reset.`
-                ).catch(() => {});
+            await resetRound(
+                `Sai rồi. Cụm từ phải bắt đầu bằng **${requiredWord}**.\n` +
+                "Game đang bắt đầu lại."
+            );
 
-                resetGame();
-                return;
-            }
+            return;
         }
 
         // Kiểm tra dictionary
         const valid = await checkVietnameseWord(phrase);
 
-        // API gặp lỗi → không reset game
+        // API lỗi
         if (valid === null) {
             await message.react("⚠️").catch(() => {});
 
             await message.reply(
-                "Không thể kiểm tra từ điển lúc này. " +
-                "Vui lòng thử lại sau."
+                "Không thể kết nối tới từ điển lúc này. Hãy thử lại."
             ).catch(() => {});
 
             return;
@@ -471,12 +527,11 @@ async function startNoiTu(session) {
         if (!valid) {
             await message.react("❌").catch(() => {});
 
-            await message.reply(
-                `**${phrase}** không được tìm thấy trong từ điển.\n` +
-                `Game đã reset.`
-            ).catch(() => {});
+            await resetRound(
+                `Cụm từ **${phrase}** không có trong từ điển.\n` +
+                "Game đang bắt đầu lại."
+            );
 
-            resetGame();
             return;
         }
 
@@ -492,10 +547,7 @@ async function startNoiTu(session) {
 
     client.on("messageCreate", messageHandler);
 
-    await channel.send(
-        "🔤 **Nối từ bắt đầu!**\n" +
-        "Hãy gửi một cụm từ tiếng Việt gồm ít nhất 2 tiếng."
-    );
+    await startRound();
 }
 
 async function startMaSoi(session) {
