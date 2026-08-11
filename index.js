@@ -105,6 +105,19 @@ async function initDatabase() {
     console.log("Database ready.");
 }
 
+async function getGameConfig(guildId, game) {
+    const result = await pool.query(
+        `
+        SELECT channel_id
+        FROM game_configs
+        WHERE guild_id = $1 AND game = $2
+        `,
+        [guildId, game]
+    );
+
+    return result.rows[0] || null;
+}
+
 async function registerCommands() {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
 
@@ -146,9 +159,11 @@ client.on("interactionCreate", async interaction => {
                 [interaction.guildId, game, channel.id]
             );
 
-            await interaction.reply(
-                `Đã thiết lập ${game} tại ${channel}.`
-            );
+        await interaction.reply({
+            content: `Đã thiết lập ${game} tại ${channel}.`,
+            ephemeral: true
+        });
+            
         } catch (error) {
             console.error(error);
 
