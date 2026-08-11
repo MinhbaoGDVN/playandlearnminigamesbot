@@ -313,7 +313,6 @@ async function startNoiTu(session) {
     }
 
     session.currentPhrase = null;
-    session.lastUserId = null;
     session.usedWords = new Set();
 
     if (!session.wordCache) {
@@ -404,10 +403,6 @@ async function startNoiTu(session) {
         for (const phrase of shuffled) {
             const normalized = normalizePhrase(phrase);
 
-            if (session.usedWords.has(normalized)) {
-                continue;
-            }
-
             const valid = await checkVietnameseWord(normalized);
 
             if (valid === true) {
@@ -420,7 +415,6 @@ async function startNoiTu(session) {
 
     async function startRound() {
         session.currentPhrase = null;
-        session.lastUserId = null;
         session.usedWords.clear();
 
         const startingPhrase = await chooseStartingPhrase();
@@ -470,18 +464,6 @@ async function startNoiTu(session) {
         // Nối từ phải có ít nhất 2 tiếng
         if (words.length < 2) return;
 
-        // Không được chơi 2 lượt liên tiếp
-        if (message.author.id === session.lastUserId) {
-            await message.react("❌").catch(() => {});
-
-            await resetRound(
-                "Bạn không được chơi 2 lượt liên tiếp.\n" +
-                "Game đang bắt đầu lại."
-            );
-
-            return;
-        }
-
         // Không được dùng lại cụm từ
         if (session.usedWords.has(phrase)) {
             await message.react("❌").catch(() => {});
@@ -494,7 +476,7 @@ async function startNoiTu(session) {
             return;
         }
 
-        // Kiểm tra nối từ
+        // Kiểm tra tiếng đầu và tiếng cuối
         const requiredWord = getLastWord(session.currentPhrase);
         const firstWord = getFirstWord(phrase);
 
@@ -523,7 +505,7 @@ async function startNoiTu(session) {
             return;
         }
 
-        // Không tồn tại trong từ điển
+        // Không có trong dictionary
         if (!valid) {
             await message.react("❌").catch(() => {});
 
@@ -537,7 +519,6 @@ async function startNoiTu(session) {
 
         // Hợp lệ
         session.currentPhrase = phrase;
-        session.lastUserId = message.author.id;
         session.usedWords.add(phrase);
 
         await message.react("✅").catch(() => {});
@@ -549,7 +530,6 @@ async function startNoiTu(session) {
 
     await startRound();
 }
-
 async function startMaSoi(session) {
 }
 
