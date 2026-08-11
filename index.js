@@ -98,7 +98,7 @@ const commands = [
                 .setDescription("Game")
                 .setRequired(true)
                 .addChoices(...games)
-        )
+        ),
     new SlashCommandBuilder()
         .setName("backup")
         .setDescription("Lưu tạm trạng thái các game đang chạy")
