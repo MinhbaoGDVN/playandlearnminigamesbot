@@ -246,23 +246,17 @@ async function startDemSo(session) {
     session.lastUserId = null;
 
     const messageHandler = async message => {
-        // Chỉ nhận tin nhắn trong đúng channel
         if (message.channelId !== session.channelId) return;
-
-        // Bỏ qua bot
         if (message.author.bot) return;
-
-        // Chỉ nhận số nguyên
         if (!/^\d+$/.test(message.content.trim())) return;
 
         const number = Number(message.content.trim());
 
-        // Không được chơi 2 lượt liên tiếp
         if (message.author.id === session.lastUserId) {
             await message.react("❌").catch(() => {});
 
             await message.reply(
-                "Bạn không được chơi 2 lượt liên tiếp!\n🔄 Game đã reset về 0."
+                "Bạn không được chơi 2 lượt liên tiếp!\nGame đã reset về **0**."
             ).catch(() => {});
 
             session.currentNumber = 0;
@@ -271,12 +265,13 @@ async function startDemSo(session) {
             return;
         }
 
-        // Phải đúng số tiếp theo
-        if (number !== session.currentNumber + 1) {
+        const expected = session.currentNumber + 1;
+
+        if (number !== expected) {
             await message.react("❌").catch(() => {});
 
             await message.reply(
-                `Sai! Số tiếp theo phải là **${session.currentNumber + 1}**.\n` +
+                `Sai! Số tiếp theo phải là **${expected}**.\n` +
                 `Game đã reset về **0**.`
             ).catch(() => {});
 
@@ -286,7 +281,6 @@ async function startDemSo(session) {
             return;
         }
 
-        // Đúng
         session.currentNumber = number;
         session.lastUserId = message.author.id;
 
@@ -297,7 +291,6 @@ async function startDemSo(session) {
 
     client.on("messageCreate", messageHandler);
 
-    // Báo bắt đầu
     await channel.send(
         "**Đếm số bắt đầu!**\n" +
         "Số hiện tại: **0**\n" +
