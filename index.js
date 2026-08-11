@@ -324,43 +324,54 @@ async function startNoiTu(session) {
             .trim()
             .toLowerCase()
             .replace(/\s+/g, " ");
-
+    
         if (session.wordCache.has(normalized)) {
             return session.wordCache.get(normalized);
         }
-
+    
         try {
             const controller = new AbortController();
-
+    
             const timeout = setTimeout(() => {
                 controller.abort();
             }, 5000);
-
+    
             const url =
                 "https://dict.minhqnd.com/api/v1/lookup" +
                 `?word=${encodeURIComponent(normalized)}` +
                 "&lang=vi";
-
+    
             const response = await fetch(url, {
                 signal: controller.signal
             });
-
+    
             clearTimeout(timeout);
-
-            if (!response.ok) {
-                throw new Error(
-                    `Dictionary API returned ${response.status}`
-                );
+    
+            const data = await response.json().catch(() => null);
+    
+            // API trả dữ liệu nhưng từ không tồn tại
+            if (response.status === 404) {
+                session.wordCache.set(normalized, false);
+                return false;
             }
-
-            const data = await response.json();
-
-            const exists = data.exists === true;
-
+    
+            // Server/API thực sự gặp lỗi
+            if (!response.ok) {
+                console.error(
+                    "Dictionary API error:",
+                    response.status,
+                    data
+                );
+    
+                return null;
+            }
+    
+            const exists = data?.exists === true;
+    
             session.wordCache.set(normalized, exists);
-
+    
             return exists;
-
+    
         } catch (error) {
             console.error("Dictionary API error:", error);
             return null;
