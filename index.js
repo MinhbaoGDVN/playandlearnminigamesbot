@@ -101,20 +101,27 @@ const commands = [
                 .addChoices(...games)
         ),
     new SlashCommandBuilder()
-        .setName("backup")
-        .setDescription("Lưu tạm trạng thái các game đang chạy")
+        .setName("stop")
+        .setDescription("Dừng game")
+        .addStringOption(option =>
+            option
+                .setName("game")
+                .setDescription("Game")
+                .setRequired(true)
+                .addChoices(...games)
+        )
 ];
 
 async function initDatabase() {
     await pool.query(`
-        CREATE TABLE IF NOT EXISTS game_backups (
+        CREATE TABLE IF NOT EXISTS game_configs (
             guild_id TEXT NOT NULL,
             game TEXT NOT NULL,
-            state JSONB NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
+            channel_id TEXT NOT NULL,
             PRIMARY KEY (guild_id, game)
         )
     `);
+
     console.log("Database ready.");
 }
 
@@ -144,19 +151,24 @@ async function startGame(game, guildId, channelId) {
         return false;
     }
 
-const session = {
-    game,
-    guildId,
-    channelId,
-
-    currentNumber: 0,
-    lastUserId: null
-};
+    const session = {
+        game,
+        guildId,
+        channelId,
+    
+        currentNumber: 0,
+        lastUserId: null
+    };
 
     activeGames.set(key, session);
 
     gameFunction(session).catch(error => {
         console.error(`Game ${game} crashed:`, error);
+    
+        if (session.messageHandler) {
+            client.off("messageCreate", session.messageHandler);
+        }
+    
         activeGames.delete(key);
     });
 
@@ -176,33 +188,6 @@ function stopGame(guildId, game) {
     }
 
     activeGames.delete(key);
-
-    return true;
-}
-
-async function backupGame(guildId, game) {
-    const key = `${guildId}:${game}`;
-    const session = activeGames.get(key);
-
-    if (!session) {
-        return false;
-    }
-
-    await pool.query(
-        `
-        INSERT INTO game_backups (guild_id, game, state)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (guild_id, game)
-        DO UPDATE SET
-            state = EXCLUDED.state,
-            created_at = NOW()
-        `,
-        [
-            guildId,
-            game,
-            JSON.stringify(session)
-        ]
-    );
 
     return true;
 }
@@ -614,6 +599,39 @@ client.on("interactionCreate", async interaction => {
     
         return interaction.reply({
             content: `Đã khởi động lại ${game}.`,
+            ephemeral: true
+        });
+    },
+    if (interaction.commandName === "stop") {
+        if (!isGameMaster(interaction.user.id)) {
+            return interaction.reply({
+                content: "Bạn không có quyền sử dụng lệnh này.",
+                ephemeral: true
+            });
+        }
+    
+        const game = interaction.options.getString("game");
+    
+        const stopped = stopGame(
+            interaction.guildId,
+            game
+        );
+    
+        if (!stopped) {
+            return interaction.reply({
+                content: "Game này hiện không chạy.",
+                ephemeral: true
+            });
+        }
+    
+        const gameNames = {
+            demso: "Đếm số",
+            noitu: "Nối từ",
+            masoi: "Ma Sói"
+        };
+    
+        return interaction.reply({
+            content: `Đã dừng **${gameNames[game] || game}**.`,
             ephemeral: true
         });
     }
