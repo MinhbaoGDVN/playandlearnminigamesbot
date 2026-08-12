@@ -170,7 +170,17 @@ async function startGame(game, guildId, channelId, gameMasterId) {
         console.error(`Game ${game} crashed:`, error);
     
         if (session.messageHandler) {
-            client.off("messageCreate", session.messageHandler);
+            client.off(
+                "messageCreate",
+                session.messageHandler
+            );
+        }
+    
+        if (session.buttonHandler) {
+            client.off(
+                "interactionCreate",
+                session.buttonHandler
+            );
         }
     
         activeGames.delete(key);
@@ -188,7 +198,17 @@ function stopGame(guildId, game) {
     }
 
     if (session.messageHandler) {
-        client.off("messageCreate", session.messageHandler);
+        client.off(
+            "messageCreate",
+            session.messageHandler
+        );
+    }
+
+    if (session.buttonHandler) {
+        client.off(
+            "interactionCreate",
+            session.buttonHandler
+        );
     }
 
     activeGames.delete(key);
@@ -475,9 +495,11 @@ async function startMaSoi(session) {
         throw new Error("Không tìm thấy kênh Ma Sói.");
     }
 
-    // =========================
-    // SESSION
-    // =========================
+    /*
+    ============================================================
+    SESSION
+    ============================================================
+    */
 
     session.phase = "lobby";
 
@@ -489,33 +511,35 @@ async function startMaSoi(session) {
     session.day = 0;
 
     session.nightStep = null;
-
     session.nightActions = new Map();
-    session.votes = new Map();
+    session.voteResults = new Map();
 
     session.witchHealUsed = false;
     session.witchKillUsed = false;
 
-    session.mayorId = null;
-
     session.lobbyMessage = null;
+    session.buttonHandler = null;
 
-    // =========================
-    // ROLE NAMES
-    // =========================
+    /*
+    ============================================================
+    ROLE NAMES
+    ============================================================
+    */
 
     const roleNames = {
         wolf: "Sói",
         villager: "Dân Làng",
         seer: "Tiên Tri",
         guardian: "Bảo Vệ",
-        hunter: "Thợ Săn",
-        witch: "Phù Thủy"
+        witch: "Phù Thủy",
+        hunter: "Thợ Săn"
     };
 
-    // =========================
-    // BASIC HELPERS
-    // =========================
+    /*
+    ============================================================
+    HELPERS
+    ============================================================
+    */
 
     const getPlayer = id => {
         return session.players.get(id);
@@ -531,91 +555,165 @@ async function startMaSoi(session) {
 
     const getAlivePlayers = () => {
         return [...session.players.values()]
-            .filter(player => session.alivePlayers.has(player.id));
+            .filter(player => isAlive(player.id));
     };
 
-    const getAliveByRole = role => {
-        return getAlivePlayers().filter(
-            player => getRole(player.id) === role
-        );
+    const getAliveRolePlayers = role => {
+        return getAlivePlayers()
+            .filter(player => getRole(player.id) === role);
     };
 
-    // =========================
-    // DM
-    // =========================
-
-    const sendDM = async (userId, content, components = []) => {
-        try {
-            const user = await client.users.fetch(userId);
-
-            await user.send({
-                content,
-                components
-            });
-
-            return true;
-        } catch (error) {
-            console.error(
-                `Không thể gửi DM cho ${userId}:`,
-                error.message
-            );
-
-            return false;
-        }
-    };
-
-    // =========================
-    // BUTTON CREATOR
-    // =========================
+    /*
+    ============================================================
+    TARGET BUTTONS
+    ============================================================
+    
+    Discord tối đa 5 rows.
+    Mỗi row tối đa 5 buttons.
+    => tối đa 25 target buttons.
+    */
 
     const createTargetButtons = (action, players) => {
         const rows = [];
-        let row = [];
+        let buttons = [];
 
-        for (const player of players) {
-            const button = new ButtonBuilder()
-                .setCustomId(
-                    `masoi_${action}_${session.guildId}_${player.id}`
-                )
-                .setLabel(
-                    player.username.slice(0, 80)
-                )
-                .setStyle(ButtonStyle.Primary);
+        for (const player of players.slice(0, 25)) {
+            buttons.push(
+                new ButtonBuilder()
+                    .setCustomId(
+                        `masoi_${action}_${session.guildId}_${player.id}`
+                    )
+                    .setLabel(
+                        player.username.slice(0, 80)
+                    )
+                    .setStyle(ButtonStyle.Primary)
+            );
 
-            row.push(button);
-
-            if (row.length === 5) {
+            if (buttons.length === 5) {
                 rows.push(
-                    new ActionRowBuilder().addComponents(row)
+                    new ActionRowBuilder()
+                        .addComponents(buttons)
                 );
 
-                row = [];
+                buttons = [];
             }
         }
 
-        if (row.length > 0) {
+        if (buttons.length) {
             rows.push(
-                new ActionRowBuilder().addComponents(row)
+                new ActionRowBuilder()
+                    .addComponents(buttons)
             );
         }
 
         return rows;
     };
 
-    // =========================
-    // LOBBY
-    // =========================
+    /*
+    ============================================================
+    PRIVATE ACTION MESSAGE
+    ============================================================
+    */
+
+    const privateAction = async (
+        interaction,
+        content,
+        components = []
+    ) => {
+        if (interaction.replied || interaction.deferred) {
+            return interaction.editReply({
+                content,
+                components
+            }).catch(() => {});
+        }
+
+        return interaction.reply({
+            content,
+            components,
+            ephemeral: true
+        });
+    };
+
+    /*
+    ============================================================
+    WIN CHECK
+    ============================================================
+    */
+
+    const checkWin = async () => {
+        if (
+            session.phase === "ended" ||
+            session.phase === "lobby"
+        ) {
+            return true;
+        }
+
+        const alive = getAlivePlayers();
+
+        const wolves = alive.filter(player =>
+            getRole(player.id) === "wolf"
+        );
+
+        const villagers = alive.filter(player =>
+            getRole(player.id) !== "wolf"
+        );
+
+        if (wolves.length === 0) {
+            session.phase = "ended";
+            session.nightStep = null;
+
+            await channel.send(
+                "🏆 **Dân Làng thắng!**\n" +
+                "Tất cả Sói đã bị loại."
+            );
+
+            return true;
+        }
+
+        if (wolves.length >= villagers.length) {
+            session.phase = "ended";
+            session.nightStep = null;
+
+            await channel.send(
+                "🐺 **Sói thắng!**\n" +
+                "Số Sói đã bằng hoặc vượt số người không phải Sói."
+            );
+
+            return true;
+        }
+
+        return false;
+    };
+
+    /*
+    ============================================================
+    KILL
+    ============================================================
+    */
+
+    const killPlayer = playerId => {
+        if (!isAlive(playerId)) {
+            return false;
+        }
+
+        session.alivePlayers.delete(playerId);
+
+        return true;
+    };
+
+    /*
+    ============================================================
+    LOBBY
+    ============================================================
+    */
 
     const updateLobby = async () => {
         const players = [...session.players.values()];
 
         const list = players.length
-            ? players
-                .map(
-                    (player, index) =>
-                        `${index + 1}. <@${player.id}>`
-                )
-                .join("\n")
+            ? players.map((player, index) =>
+                `${index + 1}. <@${player.id}>`
+            ).join("\n")
             : "Chưa có người chơi.";
 
         const embed = new EmbedBuilder()
@@ -655,8 +753,8 @@ async function startMaSoi(session) {
             );
         }
 
-        const row =
-            new ActionRowBuilder().addComponents(buttons);
+        const row = new ActionRowBuilder()
+            .addComponents(buttons);
 
         if (session.lobbyMessage) {
             await session.lobbyMessage.edit({
@@ -664,17 +762,18 @@ async function startMaSoi(session) {
                 components: [row]
             }).catch(() => {});
         } else {
-            session.lobbyMessage =
-                await channel.send({
-                    embeds: [embed],
-                    components: [row]
-                });
+            session.lobbyMessage = await channel.send({
+                embeds: [embed],
+                components: [row]
+            });
         }
     };
 
-    // =========================
-    // ASSIGN ROLES
-    // =========================
+    /*
+    ============================================================
+    ROLE ASSIGNMENT
+    ============================================================
+    */
 
     const assignRoles = () => {
         const players = [...session.players.values()];
@@ -753,717 +852,497 @@ async function startMaSoi(session) {
                 player.id
             );
         });
-
-        // Chọn trưởng làng ngẫu nhiên ban đầu
-        const alive = [...session.players.values()];
-
-        if (alive.length > 0) {
-            const mayor =
-                alive[
-                    Math.floor(
-                        Math.random() * alive.length
-                    )
-                ];
-
-            session.mayorId = mayor.id;
-        }
     };
 
-    // =========================
-    // ROLE DM
-    // =========================
-
-    const sendRoleInfo = async () => {
-        const wolves =
-            getAliveByRole("wolf");
-
-        for (const player of session.players.values()) {
-            const role =
-                getRole(player.id);
-
-            let text =
-                `Bạn đang chơi **Ma Sói**.\n\n` +
-                `Vai trò của bạn: **${roleNames[role]}**.`;
-
-            if (player.id === session.mayorId) {
-                text +=
-                    `\n\n👑 Bạn hiện là **Trưởng Làng**. ` +
-                    `Phiếu của bạn có giá trị **2**.`;
-            }
-
-            if (role === "wolf") {
-                const teammates =
-                    wolves
-                        .filter(
-                            wolf =>
-                                wolf.id !== player.id
-                        )
-                        .map(
-                            wolf =>
-                                `<@${wolf.id}>`
-                        );
-
-                if (teammates.length) {
-                    text +=
-                        `\n\nĐồng đội Sói: ` +
-                        teammates.join(", ");
-                }
-            }
-
-            await sendDM(
-                player.id,
-                text
-            );
-        }
-    };
-
-    // =========================
-    // WIN CHECK
-    // =========================
-
-    const checkWin = async () => {
-        const alive =
-            getAlivePlayers();
-
-        const wolves =
-            alive.filter(
-                player =>
-                    getRole(player.id) === "wolf"
-            );
-
-        const villagers =
-            alive.filter(
-                player =>
-                    getRole(player.id) !== "wolf"
-            );
-
-        if (wolves.length === 0) {
-            session.phase = "ended";
-
-            await channel.send(
-                "**Dân Làng thắng!**\n" +
-                "Tất cả Sói đã bị loại."
-            );
-
-            return true;
-        }
-
-        if (wolves.length >= villagers.length) {
-            session.phase = "ended";
-
-            await channel.send(
-                "**Sói thắng!**\n" +
-                "Số Sói đã bằng hoặc vượt số người không phải Sói."
-            );
-
-            return true;
-        }
-
-        return false;
-    };
-
-    // =========================
-    // KILL PLAYER
-    // =========================
-
-    const killPlayer = async playerId => {
-        if (!isAlive(playerId)) {
-            return false;
-        }
-
-        session.alivePlayers.delete(
-            playerId
-        );
-
-        return true;
-    };
-
-    // =========================
-    // START HUNTER ACTION
-    // =========================
-
-    const startHunterAction = async hunterId => {
-        if (!session.players.has(hunterId)) {
-            return;
-        }
-
-        const targets =
-            getAlivePlayers()
-                .filter(
-                    player =>
-                        player.id !== hunterId
-                );
-
-        if (!targets.length) {
-            return;
-        }
-
-        session.phase =
-            "hunter";
-
-        await channel.send(
-            `🔫 <@${hunterId}> là **Thợ Săn**.\n` +
-            `Thợ Săn có quyền chọn một người để bắn.`
-        );
-
-        await sendDM(
-            hunterId,
-            "Bạn là **Thợ Săn**.\n" +
-            "Bạn đã chết. Hãy chọn một người để bắn.",
-            createTargetButtons(
-                "hunter",
-                targets
-            )
-        );
-    };
-
-    // =========================
-    // NIGHT FINISH
-    // =========================
-
-    const finishNight = async () => {
-        if (session.phase === "ended") {
-            return;
-        }
-
-        session.phase = "resolving_night";
-
-        const wolfTarget =
-            session.nightActions.get("wolf");
-
-        const guardianTarget =
-            session.nightActions.get("guardian");
-
-        const witchHealTarget =
-            session.nightActions.get("witch_heal");
-
-        const witchKillTarget =
-            session.nightActions.get("witch_kill");
-
-        const deaths = new Set();
-
-        // Sói giết
-        if (
-            wolfTarget &&
-            wolfTarget !== guardianTarget &&
-            wolfTarget !== witchHealTarget &&
-            isAlive(wolfTarget)
-        ) {
-            deaths.add(wolfTarget);
-        }
-
-        // Phù thủy độc
-        if (
-            witchKillTarget &&
-            isAlive(witchKillTarget)
-        ) {
-            deaths.add(
-                witchKillTarget
-            );
-        }
-
-        // Xóa action trước khi xử lý
-        session.nightActions.clear();
-
-        // Giết người
-        for (const playerId of deaths) {
-            await killPlayer(playerId);
-        }
-
-        // =========================
-        // BUỔI SÁNG
-        // =========================
-
-        session.phase = "morning";
-
-        await channel.send(
-            `☀️ **BUỔI SÁNG ${session.night}**`
-        );
-
-        if (deaths.size === 0) {
-            await channel.send(
-                "Đêm qua **không có ai chết**."
-            );
-        } else {
-            for (const playerId of deaths) {
-                const role =
-                    getRole(playerId);
-
-                await channel.send(
-                    `<@${playerId}> đã chết.\n` +
-                    `Vai trò: **${roleNames[role]}**.`
-                );
-            }
-        }
-
-        // Kiểm tra thắng
-        if (await checkWin()) {
-            return;
-        }
-
-        // Nếu có Thợ Săn chết
-        for (const playerId of deaths) {
-            if (
-                getRole(playerId) === "hunter"
-            ) {
-                await startHunterAction(
-                    playerId
-                );
-
-                return;
-            }
-        }
-
-        await startDay();
-    };
-
-    // =========================
-    // START SEER
-    // =========================
-
-    const startSeer = async () => {
-        const seer =
-            getAliveByRole("seer")[0];
-
-        if (!seer) {
-            await finishNight();
-            return;
-        }
-
-        session.nightStep = "seer";
-
-        const targets =
-            getAlivePlayers()
-                .filter(
-                    player =>
-                        player.id !== seer.id
-                );
-
-        if (!targets.length) {
-            await finishNight();
-            return;
-        }
-
-        await channel.send(
-            "🔮 **Tiên Tri đang hành động...**"
-        );
-
-        await sendDM(
-            seer.id,
-            "Bạn là **Tiên Tri**.\n" +
-            "Chọn một người để soi.",
-            createTargetButtons(
-                "seer",
-                targets
-            )
-        );
-    };
-
-    // =========================
-    // START WITCH
-    // =========================
-
-    const startWitch = async () => {
-        const witch =
-            getAliveByRole("witch")[0];
-
-        if (!witch) {
-            await startSeer();
-            return;
-        }
-
-        session.nightStep = "witch";
-
-        const wolfTarget =
-            session.nightActions.get(
-                "wolf"
-            );
-
-        let content =
-            "🧙 Bạn là **Phù Thủy**.\n\n";
-
-        if (wolfTarget) {
-            content +=
-                `Sói đã chọn <@${wolfTarget}>.\n\n`;
-        } else {
-            content +=
-                "Sói chưa có mục tiêu.\n\n";
-        }
-
-        const buttons = [];
-
-        if (
-            wolfTarget &&
-            !session.witchHealUsed
-        ) {
-            buttons.push(
-                new ButtonBuilder()
-                    .setCustomId(
-                        `masoi_witchheal_${session.guildId}`
-                    )
-                    .setLabel("Cứu người")
-                    .setStyle(
-                        ButtonStyle.Success
-                    )
-            );
-        }
-
-        if (!session.witchKillUsed) {
-            buttons.push(
-                new ButtonBuilder()
-                    .setCustomId(
-                        `masoi_witchkill_${session.guildId}`
-                    )
-                    .setLabel("Dùng thuốc độc")
-                    .setStyle(
-                        ButtonStyle.Danger
-                    )
-            );
-        }
-
-        buttons.push(
-            new ButtonBuilder()
-                .setCustomId(
-                    `masoi_witchskip_${session.guildId}`
-                )
-                .setLabel("Bỏ qua")
-                .setStyle(
-                    ButtonStyle.Secondary
-                )
-        );
-
-        await channel.send(
-            "🧙 **Phù Thủy đang hành động...**"
-        );
-
-        await sendDM(
-            witch.id,
-            content,
-            [
-                new ActionRowBuilder()
-                    .addComponents(buttons)
-            ]
-        );
-    };
-
-    // =========================
-    // START GUARDIAN
-    // =========================
-
-    const startGuardian = async () => {
-        const guardian =
-            getAliveByRole("guardian")[0];
-
-        if (!guardian) {
-            await startWitch();
-            return;
-        }
-
-        session.nightStep =
-            "guardian";
-
-        const targets =
-            getAlivePlayers();
-
-        await channel.send(
-            "🛡️ **Bảo Vệ đang hành động...**"
-        );
-
-        await sendDM(
-            guardian.id,
-            "Bạn là **Bảo Vệ**.\n" +
-            "Chọn một người để bảo vệ.",
-            createTargetButtons(
-                "guardian",
-                targets
-            )
-        );
-    };
-
-    // =========================
-    // START WOLVES
-    // =========================
-
-    const startWolves = async () => {
-        const wolves =
-            getAliveByRole("wolf");
-
-        if (!wolves.length) {
-            await startGuardian();
-            return;
-        }
-
-        session.nightStep =
-            "wolves";
-
-        const targets =
-            getAlivePlayers()
-                .filter(
-                    player =>
-                        getRole(player.id) !== "wolf"
-                );
-
-        await channel.send(
-            `🐺 **Sói đang hành động...**\n` +
-            `Có ${wolves.length} Sói đang sống.`
-        );
-
-        for (const wolf of wolves) {
-            await sendDM(
-                wolf.id,
-                "Bạn là **Sói**.\n" +
-                "Chọn một người để giết đêm nay.\n\n" +
-                "Phải chờ tất cả Sói chọn xong.",
-                createTargetButtons(
-                    "wolf",
-                    targets
-                )
-            );
-        }
-    };
-
-    // =========================
-    // START NIGHT
-    // =========================
+    /*
+    ============================================================
+    START NIGHT
+    ============================================================
+    */
 
     const startNight = async () => {
         if (session.phase === "ended") {
             return;
         }
 
-        session.phase =
-            "night";
-
+        session.phase = "night";
         session.night++;
 
         session.nightActions.clear();
 
         await channel.send(
-            `🌙 **BUỔI ĐÊM ${session.night}**\n\n` +
-            `Mọi người đi ngủ.\n` +
-            `Các vai trò sẽ hành động theo thứ tự.`
+            `🌙 **Buổi đêm ${session.night} bắt đầu.**`
         );
 
-        await startWolves();
+        /*
+        Nếu không còn Sói thì chuyển thẳng sang xử lý.
+        */
+
+        const wolves = getAliveRolePlayers("wolf");
+
+        if (wolves.length === 0) {
+            await checkWin();
+            return;
+        }
+
+        session.nightStep = "wolf";
+
+        await channel.send({
+            content:
+                "🐺 **Lượt Sói**\n" +
+                "Các Sói hãy thực hiện hành động.",
+
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `masoi_action_${session.guildId}`
+                        )
+                        .setLabel("Hành động của tôi")
+                        .setStyle(ButtonStyle.Primary)
+                )
+            ]
+        });
     };
 
-    // =========================
-    // START DAY
-    // =========================
+    /*
+    ============================================================
+    START SEER
+    ============================================================
+    */
+
+    const startSeer = async () => {
+        if (session.phase === "ended") {
+            return;
+        }
+
+        const seer = getAliveRolePlayers("seer")[0];
+
+        if (!seer) {
+            return startGuardian();
+        }
+
+        session.nightStep = "seer";
+
+        await channel.send(
+            "🔮 **Lượt Tiên Tri**\n" +
+            "Tiên Tri hãy thực hiện hành động."
+        );
+
+        await channel.send({
+            content:
+                `<@${seer.id}> hãy nhấn **Hành động của tôi**.`,
+
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `masoi_action_${session.guildId}`
+                        )
+                        .setLabel("Hành động của tôi")
+                        .setStyle(ButtonStyle.Primary)
+                )
+            ]
+        });
+    };
+
+    /*
+    ============================================================
+    START GUARDIAN
+    ============================================================
+    */
+
+    const startGuardian = async () => {
+        if (session.phase === "ended") {
+            return;
+        }
+
+        const guardian =
+            getAliveRolePlayers("guardian")[0];
+
+        if (!guardian) {
+            return startWitch();
+        }
+
+        session.nightStep = "guardian";
+
+        await channel.send(
+            "🛡️ **Lượt Bảo Vệ**\n" +
+            "Bảo Vệ hãy thực hiện hành động."
+        );
+
+        await channel.send({
+            content:
+                `<@${guardian.id}> hãy nhấn **Hành động của tôi**.`,
+
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `masoi_action_${session.guildId}`
+                        )
+                        .setLabel("Hành động của tôi")
+                        .setStyle(ButtonStyle.Primary)
+                )
+            ]
+        });
+    };
+
+    /*
+    ============================================================
+    START WITCH
+    ============================================================
+    */
+
+    const startWitch = async () => {
+        if (session.phase === "ended") {
+            return;
+        }
+
+        const witch =
+            getAliveRolePlayers("witch")[0];
+
+        if (!witch) {
+            return resolveNight();
+        }
+
+        session.nightStep = "witch";
+
+        await channel.send(
+            "🧪 **Lượt Phù Thủy**\n" +
+            "Phù Thủy hãy thực hiện hành động."
+        );
+
+        await channel.send({
+            content:
+                `<@${witch.id}> hãy nhấn **Hành động của tôi**.`,
+
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `masoi_action_${session.guildId}`
+                        )
+                        .setLabel("Hành động của tôi")
+                        .setStyle(ButtonStyle.Primary)
+                )
+            ]
+        });
+    };
+
+    /*
+    ============================================================
+    RESOLVE NIGHT
+    ============================================================
+    */
+
+    const resolveNight = async () => {
+        if (
+            session.phase !== "night" ||
+            session.nightStep === "resolve"
+        ) {
+            return;
+        }
+
+        session.nightStep = "resolve";
+
+        const wolfTarget =
+            session.nightActions.get("wolf");
+
+        const protectedTarget =
+            session.nightActions.get("guardian");
+
+        const witchHeal =
+            session.nightActions.get("witch_heal");
+
+        const witchKill =
+            session.nightActions.get("witch_kill");
+
+        const deaths = [];
+
+        /*
+        Sói giết
+        */
+
+        if (
+            wolfTarget &&
+            wolfTarget !== protectedTarget &&
+            wolfTarget !== witchHeal &&
+            isAlive(wolfTarget)
+        ) {
+            deaths.push(wolfTarget);
+        }
+
+        /*
+        Phù Thủy giết
+        */
+
+        if (
+            witchKill &&
+            isAlive(witchKill) &&
+            !deaths.includes(witchKill)
+        ) {
+            deaths.push(witchKill);
+        }
+
+        /*
+        Xử lý chết
+        */
+
+        for (const playerId of deaths) {
+            killPlayer(playerId);
+        }
+
+        /*
+        BUỔI SÁNG
+        */
+
+        await channel.send(
+            `☀️ **Buổi sáng ${session.day + 1}.**`
+        );
+
+        if (deaths.length === 0) {
+            await channel.send(
+                "Đêm qua không có ai chết."
+            );
+        } else {
+            await channel.send(
+                deaths
+                    .map(id => `<@${id}>`)
+                    .join(", ") +
+                (
+                    deaths.length === 1
+                        ? " đã chết trong đêm."
+                        : " đã chết trong đêm."
+                )
+            );
+        }
+
+        /*
+        Hunter chết thì kích hoạt sau khi thông báo.
+        */
+
+        for (const playerId of deaths) {
+            if (getRole(playerId) === "hunter") {
+                await channel.send(
+                    `🏹 <@${playerId}> là **Thợ Săn** và ` +
+                    `có quyền chọn một người để bắn.`
+                );
+            }
+        }
+
+        session.nightActions.clear();
+
+        if (await checkWin()) {
+            return;
+        }
+
+        await startDay();
+    };
+
+    /*
+    ============================================================
+    START DAY
+    ============================================================
+    */
 
     const startDay = async () => {
         if (session.phase === "ended") {
             return;
         }
 
-        session.phase =
-            "day_discussion";
-
+        session.phase = "day";
         session.day++;
 
-        session.votes.clear();
+        session.voteResults.clear();
 
         await channel.send(
-            `☀️ **NGÀY ${session.day}**\n\n` +
-            `Mọi người bắt đầu thảo luận.\n\n` +
-            `Trưởng Làng: ${
-                session.mayorId
-                    ? `<@${session.mayorId}>`
-                    : "Chưa có"
-            }\n\n` +
-            `Khi thảo luận xong, Game Master có thể mở bỏ phiếu.`
+            `☀️ **Ngày ${session.day} bắt đầu.**\n` +
+            `Mọi người có thể thảo luận.`
         );
-    };
 
-    // =========================
-    // START VOTE
-    // =========================
+        await channel.send({
+            content:
+                "🗳️ Khi đã sẵn sàng, hãy nhấn **Bỏ phiếu**.",
 
-    const startVote = async () => {
-        if (session.phase !== "day_discussion") {
-            return false;
-        }
-
-        session.phase =
-            "day_vote";
-
-        session.votes.clear();
-
-        const alive =
-            getAlivePlayers();
-
-        const buttons =
-            createTargetButtons(
-                "vote",
-                alive
-            );
-
-        // Phiếu trắng
-        if (buttons.length > 0) {
-            const lastRow =
-                buttons[buttons.length - 1];
-
-            if (lastRow.components.length < 5) {
-                lastRow.addComponents(
+            components: [
+                new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
                         .setCustomId(
-                            `masoi_vote_${session.guildId}_blank`
+                            `masoi_voteopen_${session.guildId}`
                         )
-                        .setLabel("Phiếu trắng")
-                        .setStyle(
-                            ButtonStyle.Secondary
-                        )
-                );
-            } else {
-                buttons.push(
-                    new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(
-                                    `masoi_vote_${session.guildId}_blank`
-                                )
-                                .setLabel("Phiếu trắng")
-                                .setStyle(
-                                    ButtonStyle.Secondary
-                                )
-                        )
-                );
-            }
-        }
-
-        await channel.send(
-            `🗳️ **BỎ PHIẾU NGÀY ${session.day}**\n\n` +
-            `Mỗi người sống phải bỏ một phiếu.\n` +
-            `Có thể chọn **Phiếu trắng**.`
-        );
-
-        for (const player of alive) {
-            await sendDM(
-                player.id,
-                `🗳️ **Bỏ phiếu**\n\n` +
-                `Chọn người bạn muốn treo cổ.`,
-                buttons
-            );
-        }
-
-        return true;
+                        .setLabel("Bỏ phiếu")
+                        .setStyle(ButtonStyle.Primary)
+                )
+            ]
+        });
     };
 
-    // =========================
-    // RESOLVE VOTE
-    // =========================
+    /*
+    ============================================================
+    OPEN VOTE
+    ============================================================
+    */
 
-    const resolveVote = async () => {
-        session.phase =
-            "resolving_vote";
-
-        const counts =
-            new Map();
-
-        for (const [voterId, targetId] of session.votes) {
-            let power = 1;
-
-            if (
-                voterId === session.mayorId &&
-                isAlive(voterId)
-            ) {
-                power = 2;
-            }
-
-            const key =
-                targetId || "blank";
-
-            counts.set(
-                key,
-                (counts.get(key) || 0) + power
+    const openVote = async interaction => {
+        if (session.phase !== "day") {
+            return privateAction(
+                interaction,
+                "Hiện tại chưa đến thời gian bỏ phiếu."
             );
         }
 
+        if (!isAlive(interaction.user.id)) {
+            return privateAction(
+                interaction,
+                "Bạn đã chết."
+            );
+        }
+
+        /*
+        Nếu người này đã vote rồi
+        */
+
+        if (
+            session.voteResults.has(
+                interaction.user.id
+            )
+        ) {
+            return privateAction(
+                interaction,
+                "Bạn đã bỏ phiếu rồi."
+            );
+        }
+
+        const targets = getAlivePlayers()
+            .filter(player =>
+                player.id !== interaction.user.id
+            );
+
+        const rows = createTargetButtons(
+            "vote",
+            targets
+        );
+
+        /*
+        Phiếu trắng
+        */
+
+        if (rows.length < 5) {
+            rows.push(
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `masoi_blank_${session.guildId}`
+                        )
+                        .setLabel("Phiếu trắng")
+                        .setStyle(ButtonStyle.Secondary)
+                )
+            );
+        }
+
+        return privateAction(
+            interaction,
+
+            "🗳️ **Bỏ phiếu**\n" +
+            "Chọn người bạn muốn treo cổ hoặc bỏ phiếu trắng.",
+
+            rows
+        );
+    };
+
+    /*
+    ============================================================
+    RESOLVE VOTES
+    ============================================================
+    */
+
+    const resolveVotes = async () => {
+        if (session.phase !== "day") {
+            return;
+        }
+
+        session.phase = "vote_resolve";
+
+        const counts = new Map();
+
+        for (const targetId of session.voteResults.values()) {
+            if (!targetId) {
+                continue;
+            }
+
+            counts.set(
+                targetId,
+                (counts.get(targetId) || 0) + 1
+            );
+        }
+
+        /*
+        Tất cả trắng
+        */
+
         if (counts.size === 0) {
+            await channel.send(
+                "🗳️ **Kết quả bỏ phiếu**\n" +
+                "Tất cả đều bỏ phiếu trắng.\n" +
+                "Không ai bị loại."
+            );
+
+            session.voteResults.clear();
+
             await startNight();
+
             return;
         }
 
         const maxVotes =
-            Math.max(
-                ...counts.values()
-            );
+            Math.max(...counts.values());
 
-        const winners =
-            [...counts.entries()]
-                .filter(
-                    ([, count]) =>
-                        count === maxVotes
-                )
-                .map(
-                    ([targetId]) =>
-                        targetId
-                );
+        const winners = [...counts.entries()]
+            .filter(([id, count]) =>
+                count === maxVotes
+            )
+            .map(([id]) => id);
 
-        const blankVotes =
-            counts.get("blank") || 0;
+        /*
+        Hòa
+        */
 
-        // Hòa
         if (winners.length !== 1) {
             await channel.send(
-                `🗳️ **Kết quả bỏ phiếu**\n\n` +
-                `Có kết quả hòa.\n` +
-                `Không ai bị treo cổ.`
+                "🗳️ **Kết quả bỏ phiếu**\n" +
+                "Kết quả hòa.\n" +
+                "Không ai bị loại."
             );
 
+            session.voteResults.clear();
+
             await startNight();
+
             return;
         }
 
-        const eliminated =
-            winners[0];
+        const eliminated = winners[0];
 
-        // Phiếu trắng thắng
-        if (eliminated === "blank") {
-            await channel.send(
-                `🗳️ **Kết quả bỏ phiếu**\n\n` +
-                `Phiếu trắng cao nhất với **${blankVotes} phiếu**.\n` +
-                `Không ai bị treo cổ.`
-            );
+        if (!isAlive(eliminated)) {
+            session.voteResults.clear();
 
             await startNight();
+
             return;
         }
 
-        await killPlayer(
-            eliminated
-        );
+        const player = getPlayer(eliminated);
+        const role = getRole(eliminated);
 
-        const role =
-            getRole(eliminated);
+        killPlayer(eliminated);
 
         await channel.send(
-            `🗳️ **Kết quả bỏ phiếu**\n\n` +
-            `<@${eliminated}> bị treo cổ.\n` +
-            `Vai trò: **${roleNames[role]}**.`
+            `⚖️ <@${player.id}> đã bị treo cổ.\n` +
+            `Vai trò: **${roleNames[role] || role}**.`
         );
 
-        // Trưởng làng chết
-        if (
-            eliminated === session.mayorId
-        ) {
-            session.mayorId = null;
-
-            await channel.send(
-                "👑 Trưởng Làng đã chết.\n" +
-                "Chức vụ Trưởng Làng hiện đang trống."
-            );
-        }
-
-        if (
-            role === "hunter"
-        ) {
-            await startHunterAction(
-                eliminated
-            );
-
-            return;
-        }
+        session.voteResults.clear();
 
         if (await checkWin()) {
             return;
@@ -1472,873 +1351,955 @@ async function startMaSoi(session) {
         await startNight();
     };
 
-    // =========================
-    // BUTTON HANDLER
-    // =========================
+    /*
+    ============================================================
+    BUTTON HANDLER
+    ============================================================
+    */
 
     const buttonHandler = async interaction => {
         if (!interaction.isButton()) {
             return;
         }
 
-        if (
-            interaction.guildId !==
-            session.guildId
-        ) {
+        if (interaction.guildId !== session.guildId) {
+            return;
+        }
+
+        const customId =
+            interaction.customId;
+
+        if (!customId.startsWith("masoi_")) {
             return;
         }
 
         const parts =
-            interaction.customId.split("_");
+            customId.split("_");
 
-        if (parts[0] !== "masoi") {
+        const action = parts[1];
+
+        /*
+        ========================================================
+        LOBBY JOIN
+        ========================================================
+        */
+
+        if (action === "join") {
+            if (session.phase !== "lobby") {
+                return privateAction(
+                    interaction,
+                    "Lobby đã đóng."
+                );
+            }
+
+            if (session.players.has(interaction.user.id)) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã tham gia rồi."
+                );
+            }
+
+            session.players.set(
+                interaction.user.id,
+                {
+                    id: interaction.user.id,
+                    username: interaction.user.username
+                }
+            );
+
+            await privateAction(
+                interaction,
+                "Bạn đã tham gia Ma Sói."
+            );
+
+            await updateLobby();
+
             return;
         }
 
-        const action =
-            parts[1];
+        /*
+        ========================================================
+        LOBBY LEAVE
+        ========================================================
+        */
 
-        // =========================
-        // LOBBY
-        // =========================
-
-        if (
-            action === "join" ||
-            action === "leave" ||
-            action === "begin"
-        ) {
-            if (
-                session.phase !== "lobby"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Lobby đã đóng.",
-                    ephemeral: true
-                });
-            }
-
-            if (action === "join") {
-                if (
-                    session.players.has(
-                        interaction.user.id
-                    )
-                ) {
-                    return interaction.reply({
-                        content:
-                            "Bạn đã tham gia.",
-                        ephemeral: true
-                    });
-                }
-
-                session.players.set(
-                    interaction.user.id,
-                    {
-                        id:
-                            interaction.user.id,
-                        username:
-                            interaction.user.username
-                    }
+        if (action === "leave") {
+            if (session.phase !== "lobby") {
+                return privateAction(
+                    interaction,
+                    "Lobby đã đóng."
                 );
-
-                await interaction.reply({
-                    content:
-                        "Bạn đã tham gia Ma Sói.",
-                    ephemeral: true
-                });
-
-                await updateLobby();
-
-                return;
             }
 
-            if (action === "leave") {
-                if (
-                    !session.players.has(
-                        interaction.user.id
-                    )
-                ) {
-                    return interaction.reply({
-                        content:
-                            "Bạn chưa tham gia.",
-                        ephemeral: true
-                    });
-                }
-
-                session.players.delete(
-                    interaction.user.id
+            if (!session.players.has(interaction.user.id)) {
+                return privateAction(
+                    interaction,
+                    "Bạn chưa tham gia."
                 );
-
-                await interaction.reply({
-                    content:
-                        "Bạn đã rời Ma Sói.",
-                    ephemeral: true
-                });
-
-                await updateLobby();
-
-                return;
             }
 
-            if (action === "begin") {
-                if (
-                    interaction.user.id !==
-                    session.gameMasterId
-                ) {
-                    return interaction.reply({
-                        content:
-                            "Chỉ Game Master mới có thể bắt đầu.",
-                        ephemeral: true
-                    });
-                }
+            session.players.delete(
+                interaction.user.id
+            );
 
-                if (
-                    session.players.size < 3
-                ) {
-                    return interaction.reply({
-                        content:
-                            "Cần ít nhất 3 người chơi.",
-                        ephemeral: true
-                    });
-                }
+            await privateAction(
+                interaction,
+                "Bạn đã rời Ma Sói."
+            );
 
-                await interaction.deferUpdate();
+            await updateLobby();
 
-                session.phase =
-                    "starting";
-
-                await interaction.message.edit({
-                    components: []
-                }).catch(() => {});
-
-                assignRoles();
-
-                await channel.send(
-                    `🐺 **VÁN MA SÓI BẮT ĐẦU!**\n\n` +
-                    `Số người chơi: **${session.players.size}**`
-                );
-
-                await sendRoleInfo();
-
-                await startNight();
-
-                return;
-            }
+            return;
         }
 
-        // =========================
-        // GAME MASTER: START VOTE
-        // =========================
+        /*
+        ========================================================
+        BEGIN
+        ========================================================
+        */
 
-        if (
-            action === "startvote"
-        ) {
-            if (
-                session.phase !==
-                "day_discussion"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa thể mở bỏ phiếu.",
-                    ephemeral: true
-                });
-            }
-
+        if (action === "begin") {
             if (
                 interaction.user.id !==
                 session.gameMasterId
             ) {
-                return interaction.reply({
-                    content:
-                        "Chỉ Game Master mới có thể mở bỏ phiếu.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Chỉ Game Master mới có thể bắt đầu."
+                );
             }
 
-            await interaction.deferUpdate();
+            if (session.players.size < 3) {
+                return privateAction(
+                    interaction,
+                    "Cần ít nhất 3 người chơi."
+                );
+            }
 
-            await startVote();
+            session.phase = "starting";
+
+            await interaction.update({
+                components: []
+            });
+
+            assignRoles();
+
+            await channel.send(
+                `🐺 **Ván Ma Sói bắt đầu!**\n` +
+                `Có **${session.players.size} người chơi**.\n` +
+                `Vai trò đã được phân phối bí mật.`
+            );
+
+            /*
+            KHÔNG gửi role ra channel.
+            */
+
+            await startNight();
 
             return;
         }
 
-        // =========================
-        // NIGHT ACTIONS
-        // =========================
+        /*
+        ========================================================
+        ACTION MENU
+        ========================================================
+        */
 
-        if (
-            action === "wolf" ||
-            action === "guardian" ||
-            action === "seer" ||
-            action === "hunter"
-        ) {
-            const targetId =
-                parts[3];
-
-            if (
-                !isAlive(
-                    interaction.user.id
-                ) &&
-                action !== "hunter"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn đã chết.",
-                    ephemeral: true
-                });
+        if (action === "action") {
+            if (session.phase !== "night") {
+                return privateAction(
+                    interaction,
+                    "Hiện tại không phải buổi đêm."
+                );
             }
 
-            // Đảm bảo đúng phase
-            if (
-                action === "wolf" &&
-                session.nightStep !== "wolves"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa đến lượt Sói.",
-                    ephemeral: true
-                });
+            const playerId =
+                interaction.user.id;
+
+            if (!session.players.has(playerId)) {
+                return privateAction(
+                    interaction,
+                    "Bạn không tham gia ván này."
+                );
             }
 
-            if (
-                action === "guardian" &&
-                session.nightStep !== "guardian"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa đến lượt Bảo Vệ.",
-                    ephemeral: true
-                });
-            }
-
-            if (
-                action === "seer" &&
-                session.nightStep !== "seer"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa đến lượt Tiên Tri.",
-                    ephemeral: true
-                });
-            }
-
-            if (
-                action === "hunter" &&
-                session.phase !== "hunter"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Hiện không phải lượt của Thợ Săn.",
-                    ephemeral: true
-                });
-            }
-
-            if (
-                !isAlive(targetId)
-            ) {
-                return interaction.reply({
-                    content:
-                        "Người này đã chết.",
-                    ephemeral: true
-                });
-            }
-
-            if (
-                targetId ===
-                interaction.user.id
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không thể chọn chính mình.",
-                    ephemeral: true
-                });
+            if (!isAlive(playerId)) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã chết."
+                );
             }
 
             const role =
-                getRole(
-                    interaction.user.id
-                );
+                getRole(playerId);
 
-            if (
-                action === "wolf" &&
-                role !== "wolf"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không phải Sói.",
-                    ephemeral: true
-                });
-            }
+            /*
+            Sói
+            */
 
-            if (
-                action === "guardian" &&
-                role !== "guardian"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không phải Bảo Vệ.",
-                    ephemeral: true
-                });
-            }
-
-            if (
-                action === "seer" &&
-                role !== "seer"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không phải Tiên Tri.",
-                    ephemeral: true
-                });
-            }
-
-            if (
-                action === "hunter" &&
-                role !== "hunter"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không phải Thợ Săn.",
-                    ephemeral: true
-                });
-            }
-
-            // Sói không giết Sói
-            if (
-                action === "wolf" &&
-                getRole(targetId) === "wolf"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Sói không thể chọn Sói khác.",
-                    ephemeral: true
-                });
-            }
-
-            // Tiên tri
-            if (
-                action === "seer"
-            ) {
-                const targetRole =
-                    getRole(targetId);
-
-                await interaction.reply({
-                    content:
-                        `<@${targetId}> là **${roleNames[targetRole]}**.`,
-                    ephemeral: true
-                });
-
-                session.nightActions.set(
-                    interaction.user.id,
-                    {
-                        action:
-                            "seer",
-                        targetId
-                    }
-                );
-
-                // Tiên tri xong
-                await startGuardian();
-
-                return;
-            }
-
-            // Hunter
-            if (
-                action === "hunter"
-            ) {
-                await interaction.reply({
-                    content:
-                        `Bạn đã bắn <@${targetId}>.`,
-                    ephemeral: true
-                });
-
-                await killPlayer(
-                    targetId
-                );
-
-                await channel.send(
-                    `🔫 <@${interaction.user.id}> ` +
-                    `đã bắn <@${targetId}>.`
-                );
-
-                if (
-                    getRole(targetId) ===
-                    "hunter"
-                ) {
-                    await startHunterAction(
-                        targetId
+            if (role === "wolf") {
+                if (session.nightStep !== "wolf") {
+                    return privateAction(
+                        interaction,
+                        "Hiện tại chưa đến lượt Sói."
                     );
-
-                    return;
                 }
-
-                if (
-                    await checkWin()
-                ) {
-                    return;
-                }
-
-                if (
-                    session.nightStep
-                ) {
-                    await finishNight();
-                } else {
-                    await startNight();
-                }
-
-                return;
-            }
-
-            // Guardian
-            if (
-                action === "guardian"
-            ) {
-                session.nightActions.set(
-                    "guardian",
-                    targetId
-                );
-
-                await interaction.reply({
-                    content:
-                        `Bạn đã bảo vệ <@${targetId}>.`,
-                    ephemeral: true
-                });
-
-                await startWitch();
-
-                return;
-            }
-
-            // =========================
-            // WOLF
-            // =========================
-
-            if (
-                action === "wolf"
-            ) {
-                session.nightActions.set(
-                    interaction.user.id,
-                    {
-                        action:
-                            "wolf",
-                        targetId
-                    }
-                );
-
-                await interaction.reply({
-                    content:
-                        `Đã chọn <@${targetId}>.`,
-                    ephemeral: true
-                });
 
                 const wolves =
-                    getAliveByRole(
-                        "wolf"
+                    getAliveRolePlayers("wolf");
+
+                const targets =
+                    getAlivePlayers().filter(player =>
+                        getRole(player.id) !== "wolf"
                     );
 
-                const allWolvesActed =
-                    wolves.every(
-                        wolf =>
-                            session.nightActions.has(
-                                wolf.id
+                const chosen =
+                    session.nightActions.get(
+                        `wolf_${playerId}`
+                    );
+
+                return privateAction(
+                    interaction,
+
+                    chosen
+                        ? `🐺 Bạn đã chọn <@${chosen}>.\n` +
+                          `Các Sói khác vẫn đang chọn.`
+                        : "🐺 **Bạn là Sói.**\n\n" +
+                          "Chọn một người để giết đêm nay.",
+
+                    chosen
+                        ? []
+                        : createTargetButtons(
+                            "wolf",
+                            targets
+                        )
+                );
+            }
+
+            /*
+            Tiên Tri
+            */
+
+            if (role === "seer") {
+                if (session.nightStep !== "seer") {
+                    return privateAction(
+                        interaction,
+                        "Hiện tại chưa đến lượt Tiên Tri."
+                    );
+                }
+
+                const targets =
+                    getAlivePlayers().filter(player =>
+                        player.id !== playerId
+                    );
+
+                return privateAction(
+                    interaction,
+
+                    "🔮 **Bạn là Tiên Tri.**\n" +
+                    "Chọn một người để soi.",
+
+                    createTargetButtons(
+                        "seer",
+                        targets
+                    )
+                );
+            }
+
+            /*
+            Bảo Vệ
+            */
+
+            if (role === "guardian") {
+                if (session.nightStep !== "guardian") {
+                    return privateAction(
+                        interaction,
+                        "Hiện tại chưa đến lượt Bảo Vệ."
+                    );
+                }
+
+                return privateAction(
+                    interaction,
+
+                    "🛡️ **Bạn là Bảo Vệ.**\n" +
+                    "Chọn một người để bảo vệ.",
+
+                    createTargetButtons(
+                        "guardian",
+                        getAlivePlayers()
+                    )
+                );
+            }
+
+            /*
+            Phù Thủy
+            */
+
+            if (role === "witch") {
+                if (session.nightStep !== "witch") {
+                    return privateAction(
+                        interaction,
+                        "Hiện tại chưa đến lượt Phù Thủy."
+                    );
+                }
+
+                const rows = [];
+
+                const wolfTarget =
+                    session.nightActions.get("wolf");
+
+                /*
+                Thuốc cứu
+                */
+
+                if (
+                    wolfTarget &&
+                    !session.witchHealUsed
+                ) {
+                    rows.push(
+                        new ActionRowBuilder()
+                            .addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId(
+                                        `masoi_witchheal_${session.guildId}`
+                                    )
+                                    .setLabel(
+                                        "Dùng thuốc cứu"
+                                    )
+                                    .setStyle(
+                                        ButtonStyle.Success
+                                    )
                             )
                     );
-
-                if (
-                    !allWolvesActed
-                ) {
-                    await interaction.followUp({
-                        content:
-                            "Đã ghi nhận. Đang chờ các Sói khác.",
-                        ephemeral: true
-                    }).catch(() => {});
-
-                    return;
                 }
 
-                // Lấy mục tiêu của Sói
-                const wolfTargets =
-                    wolves.map(
-                        wolf =>
-                            session.nightActions.get(
-                                wolf.id
-                            )?.targetId
-                    );
+                /*
+                Thuốc độc
+                */
 
-                // Nếu Sói chọn khác nhau,
-                // lấy mục tiêu có nhiều lựa chọn nhất.
-                const counts =
-                    new Map();
-
-                for (
-                    const target of wolfTargets
-                ) {
-                    counts.set(
-                        target,
-                        (counts.get(target) || 0) + 1
-                    );
-                }
-
-                const max =
-                    Math.max(
-                        ...counts.values()
-                    );
-
-                const selected =
-                    [...counts.entries()]
-                        .filter(
-                            ([, count]) =>
-                                count === max
+                if (!session.witchKillUsed) {
+                    rows.push(
+                        ...createTargetButtons(
+                            "witchkill",
+                            getAlivePlayers().filter(
+                                player =>
+                                    player.id !== playerId
+                            )
                         )
-                        .map(
-                            ([target]) =>
-                                target
-                        );
-
-                // Hòa giữa Sói
-                if (
-                    selected.length > 1
-                ) {
-                    session.nightActions.set(
-                        "wolf",
-                        null
-                    );
-                } else {
-                    session.nightActions.set(
-                        "wolf",
-                        selected[0]
                     );
                 }
 
-                await startGuardian();
+                /*
+                Nút bỏ qua
+                */
 
-                return;
+                if (rows.length < 5) {
+                    rows.push(
+                        new ActionRowBuilder()
+                            .addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId(
+                                        `masoi_witchskip_${session.guildId}`
+                                    )
+                                    .setLabel(
+                                        "Không sử dụng thuốc"
+                                    )
+                                    .setStyle(
+                                        ButtonStyle.Secondary
+                                    )
+                            )
+                    );
+                }
+
+                return privateAction(
+                    interaction,
+
+                    "🧪 **Bạn là Phù Thủy.**\n" +
+                    "Bạn có thể sử dụng thuốc hoặc bỏ qua.",
+
+                    rows
+                );
             }
+
+            return privateAction(
+                interaction,
+                `Vai trò của bạn là **${roleNames[role] || role}**.\n` +
+                "Bạn không có hành động trong lượt này."
+            );
         }
 
-        // =========================
-        // WITCH
-        // =========================
+        /*
+        ========================================================
+        WOLF
+        ========================================================
+        */
 
-        if (
-            action === "witchheal"
-        ) {
+        if (action === "wolf") {
+            if (
+                session.phase !== "night" ||
+                session.nightStep !== "wolf"
+            ) {
+                return privateAction(
+                    interaction,
+                    "Hiện tại chưa đến lượt Sói."
+                );
+            }
+
+            const playerId =
+                interaction.user.id;
+
+            if (getRole(playerId) !== "wolf") {
+                return privateAction(
+                    interaction,
+                    "Bạn không phải Sói."
+                );
+            }
+
+            if (!isAlive(playerId)) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã chết."
+                );
+            }
+
+            const targetId = parts[3];
+
+            if (!targetId || !isAlive(targetId)) {
+                return privateAction(
+                    interaction,
+                    "Mục tiêu không hợp lệ."
+                );
+            }
+
+            if (getRole(targetId) === "wolf") {
+                return privateAction(
+                    interaction,
+                    "Sói không thể chọn Sói."
+                );
+            }
+
+            session.nightActions.set(
+                `wolf_${playerId}`,
+                targetId
+            );
+
+            const wolves =
+                getAliveRolePlayers("wolf");
+
+            const allChosen =
+                wolves.every(wolf =>
+                    session.nightActions.has(
+                        `wolf_${wolf.id}`
+                    )
+                );
+
+            await privateAction(
+                interaction,
+
+                `🐺 Bạn đã chọn <@${targetId}>.\n` +
+                (
+                    allChosen
+                        ? "Tất cả Sói đã chọn."
+                        : "Đang chờ các Sói khác."
+                )
+            );
+
+            if (!allChosen) {
+                return;
+            }
+
+            /*
+            Đếm phiếu Sói
+            */
+
+            const wolfVotes = new Map();
+
+            for (const wolf of wolves) {
+                const target =
+                    session.nightActions.get(
+                        `wolf_${wolf.id}`
+                    );
+
+                if (!target) continue;
+
+                wolfVotes.set(
+                    target,
+                    (wolfVotes.get(target) || 0) + 1
+                );
+            }
+
+            if (wolfVotes.size === 0) {
+                return;
+            }
+
+            const maxVotes =
+                Math.max(...wolfVotes.values());
+
+            const winners =
+                [...wolfVotes.entries()]
+                    .filter(([id, votes]) =>
+                        votes === maxVotes
+                    )
+                    .map(([id]) => id);
+
+            const selected =
+                winners[
+                    Math.floor(
+                        Math.random() *
+                        winners.length
+                    )
+                ];
+
+            session.nightActions.set(
+                "wolf",
+                selected
+            );
+
+            await startSeer();
+
+            return;
+        }
+
+        /*
+        ========================================================
+        SEER
+        ========================================================
+        */
+
+        if (action === "seer") {
+            if (
+                session.phase !== "night" ||
+                session.nightStep !== "seer"
+            ) {
+                return privateAction(
+                    interaction,
+                    "Hiện tại chưa đến lượt Tiên Tri."
+                );
+            }
+
+            if (getRole(interaction.user.id) !== "seer") {
+                return privateAction(
+                    interaction,
+                    "Bạn không phải Tiên Tri."
+                );
+            }
+
+            const targetId = parts[3];
+
+            if (!targetId || !isAlive(targetId)) {
+                return privateAction(
+                    interaction,
+                    "Mục tiêu không hợp lệ."
+                );
+            }
+
+            if (targetId === interaction.user.id) {
+                return privateAction(
+                    interaction,
+                    "Bạn không thể tự soi mình."
+                );
+            }
+
+            const targetRole =
+                getRole(targetId);
+
+            await privateAction(
+                interaction,
+
+                `🔮 <@${targetId}> là **${
+                    roleNames[targetRole] || targetRole
+                }**.`
+            );
+
+            session.nightActions.set(
+                "seer",
+                targetId
+            );
+
+            await startGuardian();
+
+            return;
+        }
+
+        /*
+        ========================================================
+        GUARDIAN
+        ========================================================
+        */
+
+        if (action === "guardian") {
+            if (
+                session.phase !== "night" ||
+                session.nightStep !== "guardian"
+            ) {
+                return privateAction(
+                    interaction,
+                    "Hiện tại chưa đến lượt Bảo Vệ."
+                );
+            }
+
+            if (
+                getRole(interaction.user.id) !==
+                "guardian"
+            ) {
+                return privateAction(
+                    interaction,
+                    "Bạn không phải Bảo Vệ."
+                );
+            }
+
+            const targetId = parts[3];
+
+            if (!targetId || !isAlive(targetId)) {
+                return privateAction(
+                    interaction,
+                    "Mục tiêu không hợp lệ."
+                );
+            }
+
+            session.nightActions.set(
+                "guardian",
+                targetId
+            );
+
+            await privateAction(
+                interaction,
+
+                `🛡️ Bạn đã bảo vệ <@${targetId}>.`
+            );
+
+            await startWitch();
+
+            return;
+        }
+
+        /*
+        ========================================================
+        WITCH HEAL
+        ========================================================
+        */
+
+        if (action === "witchheal") {
             if (
                 session.phase !== "night" ||
                 session.nightStep !== "witch"
             ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa đến lượt Phù Thủy.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Hiện tại chưa đến lượt Phù Thủy."
+                );
             }
 
             if (
-                getRole(
-                    interaction.user.id
-                ) !== "witch"
+                getRole(interaction.user.id) !== "witch"
             ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không phải Phù Thủy.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Bạn không phải Phù Thủy."
+                );
             }
 
-            if (
-                session.witchHealUsed
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn đã dùng thuốc cứu.",
-                    ephemeral: true
-                });
+            if (session.witchHealUsed) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã dùng thuốc cứu rồi."
+                );
             }
 
             const target =
-                session.nightActions.get(
-                    "wolf"
-                );
+                session.nightActions.get("wolf");
 
             if (!target) {
-                return interaction.reply({
-                    content:
-                        "Không có người bị Sói chọn để cứu.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Sói chưa chọn mục tiêu."
+                );
             }
 
-            session.witchHealUsed =
-                true;
+            session.witchHealUsed = true;
 
             session.nightActions.set(
                 "witch_heal",
                 target
             );
 
-            await interaction.reply({
-                content:
-                    `Bạn đã cứu <@${target}>.`,
-                ephemeral: true
-            });
+            await privateAction(
+                interaction,
 
-            await startSeer();
-
-            return;
-        }
-
-        if (
-            action === "witchskip"
-        ) {
-            if (
-                session.nightStep !==
-                "witch"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa đến lượt Phù Thủy.",
-                    ephemeral: true
-                });
-            }
-
-            await interaction.reply({
-                content:
-                    "Bạn đã bỏ qua hành động.",
-                ephemeral: true
-            });
-
-            await startSeer();
+                `💚 Bạn đã cứu <@${target}>.\n` +
+                "Bạn vẫn có thể dùng thuốc độc nếu muốn."
+            );
 
             return;
         }
 
-        if (
-            action === "witchkill"
-        ) {
+        /*
+        ========================================================
+        WITCH KILL
+        ========================================================
+        */
+
+        if (action === "witchkill") {
             if (
-                session.nightStep !==
-                "witch"
+                session.phase !== "night" ||
+                session.nightStep !== "witch"
             ) {
-                return interaction.reply({
-                    content:
-                        "Hiện chưa đến lượt Phù Thủy.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Hiện tại chưa đến lượt Phù Thủy."
+                );
             }
 
             if (
-                getRole(
-                    interaction.user.id
-                ) !== "witch"
+                getRole(interaction.user.id) !== "witch"
             ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không phải Phù Thủy.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Bạn không phải Phù Thủy."
+                );
             }
 
-            if (
-                session.witchKillUsed
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn đã dùng thuốc độc.",
-                    ephemeral: true
-                });
+            if (session.witchKillUsed) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã dùng thuốc độc rồi."
+                );
             }
 
-            session.witchKillUsed =
-                true;
+            const targetId = parts[3];
 
-            const targets =
-                getAlivePlayers()
-                    .filter(
-                        player =>
-                            player.id !==
-                            interaction.user.id
-                    );
-
-            await interaction.reply({
-                content:
-                    "Chọn người muốn đầu độc.",
-                components:
-                    createTargetButtons(
-                        "witchpoison",
-                        targets
-                    ),
-                ephemeral: true
-            });
-
-            return;
-        }
-
-        // =========================
-        // WITCH POISON
-        // =========================
-
-        if (
-            action === "witchpoison"
-        ) {
-            if (
-                session.nightStep !==
-                "witch"
-            ) {
-                return interaction.reply({
-                    content:
-                        "Đã hết lượt Phù Thủy.",
-                    ephemeral: true
-                });
+            if (!targetId || !isAlive(targetId)) {
+                return privateAction(
+                    interaction,
+                    "Mục tiêu không hợp lệ."
+                );
             }
 
-            const targetId =
-                parts[3];
-
-            if (
-                !isAlive(targetId)
-            ) {
-                return interaction.reply({
-                    content:
-                        "Người này đã chết.",
-                    ephemeral: true
-                });
+            if (targetId === interaction.user.id) {
+                return privateAction(
+                    interaction,
+                    "Bạn không thể dùng thuốc độc lên chính mình."
+                );
             }
+
+            session.witchKillUsed = true;
 
             session.nightActions.set(
                 "witch_kill",
                 targetId
             );
 
-            await interaction.reply({
-                content:
-                    `Đã đầu độc <@${targetId}>.`,
-                ephemeral: true
-            });
+            await privateAction(
+                interaction,
 
-            await startSeer();
+                `☠️ Bạn đã chọn giết <@${targetId}> bằng thuốc độc.`
+            );
 
             return;
         }
 
-        // =========================
-        // VOTE
-        // =========================
+        /*
+        ========================================================
+        WITCH SKIP
+        ========================================================
+        */
 
-        if (
-            action === "vote"
-        ) {
+        if (action === "witchskip") {
             if (
-                session.phase !==
-                "day_vote"
+                session.phase !== "night" ||
+                session.nightStep !== "witch"
             ) {
-                return interaction.reply({
-                    content:
-                        "Hiện không phải lúc bỏ phiếu.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Hiện tại chưa đến lượt Phù Thủy."
+                );
+            }
+
+            if (
+                getRole(interaction.user.id) !== "witch"
+            ) {
+                return privateAction(
+                    interaction,
+                    "Bạn không phải Phù Thủy."
+                );
+            }
+
+            await privateAction(
+                interaction,
+                "🧪 Bạn đã bỏ qua lượt Phù Thủy."
+            );
+
+            await resolveNight();
+
+            return;
+        }
+
+        /*
+        ========================================================
+        VOTE OPEN
+        ========================================================
+        */
+
+        if (action === "voteopen") {
+            return openVote(interaction);
+        }
+
+        /*
+        ========================================================
+        VOTE
+        ========================================================
+        */
+
+        if (action === "vote") {
+            if (session.phase !== "day") {
+                return privateAction(
+                    interaction,
+                    "Hiện tại không phải thời gian bỏ phiếu."
+                );
             }
 
             const voterId =
                 interaction.user.id;
 
-            if (
-                !isAlive(voterId)
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn đã chết.",
-                    ephemeral: true
-                });
+            if (!isAlive(voterId)) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã chết."
+                );
             }
 
             if (
-                session.votes.has(
-                    voterId
-                )
+                session.voteResults.has(voterId)
             ) {
-                return interaction.reply({
-                    content:
-                        "Bạn đã bỏ phiếu rồi.",
-                    ephemeral: true
-                });
+                return privateAction(
+                    interaction,
+                    "Bạn đã bỏ phiếu rồi."
+                );
             }
 
-            const targetId =
-                parts[3];
+            const targetId = parts[3];
 
-            if (
-                targetId !== "blank" &&
-                !isAlive(targetId)
-            ) {
-                return interaction.reply({
-                    content:
-                        "Người này đã chết.",
-                    ephemeral: true
-                });
+            if (!targetId || !isAlive(targetId)) {
+                return privateAction(
+                    interaction,
+                    "Mục tiêu không hợp lệ."
+                );
             }
 
-            if (
-                targetId === voterId
-            ) {
-                return interaction.reply({
-                    content:
-                        "Bạn không thể tự vote chính mình.",
-                    ephemeral: true
-                });
+            if (targetId === voterId) {
+                return privateAction(
+                    interaction,
+                    "Bạn không thể tự vote chính mình."
+                );
             }
 
-            session.votes.set(
+            session.voteResults.set(
                 voterId,
-                targetId === "blank"
-                    ? null
-                    : targetId
+                targetId
             );
 
-            await interaction.reply({
-                content:
-                    targetId === "blank"
-                        ? "Bạn đã chọn **Phiếu trắng**."
-                        : `Bạn đã vote <@${targetId}>.`,
-                ephemeral: true
-            });
+            await privateAction(
+                interaction,
+
+                `🗳️ Bạn đã vote <@${targetId}>.`
+            );
 
             const alive =
                 getAlivePlayers();
 
             const allVoted =
-                alive.every(
-                    player =>
-                        session.votes.has(
-                            player.id
-                        )
+                alive.every(player =>
+                    session.voteResults.has(
+                        player.id
+                    )
                 );
 
+            if (allVoted) {
+                await resolveVotes();
+            }
+
+            return;
+        }
+
+        /*
+        ========================================================
+        BLANK VOTE
+        ========================================================
+        */
+
+        if (action === "blank") {
+            if (session.phase !== "day") {
+                return privateAction(
+                    interaction,
+                    "Hiện tại không phải thời gian bỏ phiếu."
+                );
+            }
+
+            const voterId =
+                interaction.user.id;
+
+            if (!isAlive(voterId)) {
+                return privateAction(
+                    interaction,
+                    "Bạn đã chết."
+                );
+            }
+
             if (
-                allVoted
+                session.voteResults.has(voterId)
             ) {
-                await resolveVote();
+                return privateAction(
+                    interaction,
+                    "Bạn đã bỏ phiếu rồi."
+                );
+            }
+
+            session.voteResults.set(
+                voterId,
+                null
+            );
+
+            await privateAction(
+                interaction,
+                "🗳️ Bạn đã bỏ **phiếu trắng**."
+            );
+
+            const alive =
+                getAlivePlayers();
+
+            const allVoted =
+                alive.every(player =>
+                    session.voteResults.has(
+                        player.id
+                    )
+                );
+
+            if (allVoted) {
+                await resolveVotes();
             }
 
             return;
         }
     };
 
-    // =========================
-    // SAVE HANDLER
-    // =========================
+    /*
+    ============================================================
+    REGISTER HANDLER
+    ============================================================
+    */
 
-    session.buttonHandler =
-        buttonHandler;
+    session.buttonHandler = buttonHandler;
 
     client.on(
         "interactionCreate",
         buttonHandler
     );
 
-    // =========================
-    // INITIAL LOBBY
-    // =========================
+    /*
+    ============================================================
+    START LOBBY
+    ============================================================
+    */
 
     await updateLobby();
 }
