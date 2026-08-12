@@ -1,4 +1,5 @@
 require("dotenv").config();
+const dictionary = require("@vntk/dictionary");
 
 const {
     Client,
@@ -307,15 +308,6 @@ async function startNoiTu(session) {
 
     session.currentPhrase = null;
     session.usedWords = new Set();
-    session.wordCache = new Map();
-
-    const dictionaryApis = [
-        word =>
-            `https://dict.minhqnd.com/api/v1/lookup?word=${encodeURIComponent(word)}&lang=vi`,
-
-        word =>
-            `https://botudien.pythonanywhere.com/api/lookup?word=${encodeURIComponent(word)}`
-    ];
 
     function normalizePhrase(text) {
         return text
@@ -333,63 +325,8 @@ async function startNoiTu(session) {
         return words[words.length - 1];
     }
 
-    async function checkVietnameseWord(word) {
-        const normalized = normalizePhrase(word);
-
-        if (session.wordCache.has(normalized)) {
-            return session.wordCache.get(normalized);
-        }
-
-        let hasWorkingApi = false;
-
-        for (const createUrl of dictionaryApis) {
-            const url = createUrl(normalized);
-
-            try {
-                const controller = new AbortController();
-
-                const timeout = setTimeout(() => {
-                    controller.abort();
-                }, 5000);
-
-                let response;
-
-                try {
-                    response = await fetch(url, {
-                        signal: controller.signal
-                    });
-                } finally {
-                    clearTimeout(timeout);
-                }
-
-                if (response.status === 200) {
-                    session.wordCache.set(normalized, true);
-                    return true;
-                }
-
-                if (response.status === 404) {
-                    hasWorkingApi = true;
-                    continue;
-                }
-
-                console.error(
-                    `Dictionary API returned ${response.status}: ${url}`
-                );
-
-            } catch (error) {
-                console.error(
-                    `Dictionary API error: ${url}`,
-                    error.message
-                );
-            }
-        }
-
-        if (hasWorkingApi) {
-            session.wordCache.set(normalized, false);
-            return false;
-        }
-
-        return null;
+    function checkVietnameseWord(phrase) {
+        return dictionary.has(phrase);
     }
 
     const startingPhrases = [
@@ -403,7 +340,7 @@ async function startNoiTu(session) {
         "trường học",
         "công việc",
         "cuộc sống",
-        "Việt Nam",
+        "việt nam",
         "thành phố",
         "bạn bè",
         "mạng xã hội",
@@ -415,21 +352,17 @@ async function startNoiTu(session) {
         "phần mềm"
     ];
 
-    async function chooseStartingPhrase() {
+    function chooseStartingPhrase() {
         const shuffled = [...startingPhrases]
             .sort(() => Math.random() - 0.5);
 
         for (const phrase of shuffled) {
-            const normalized = normalizePhrase(phrase);
-
-            if (session.usedWords.has(normalized)) {
+            if (session.usedWords.has(phrase)) {
                 continue;
             }
 
-            const valid = await checkVietnameseWord(normalized);
-
-            if (valid === true) {
-                return normalized;
+            if (checkVietnameseWord(phrase)) {
+                return phrase;
             }
         }
 
@@ -440,7 +373,7 @@ async function startNoiTu(session) {
         session.currentPhrase = null;
         session.usedWords.clear();
 
-        const startingPhrase = await chooseStartingPhrase();
+        const startingPhrase = chooseStartingPhrase();
 
         if (!startingPhrase) {
             throw new Error(
@@ -480,7 +413,6 @@ async function startNoiTu(session) {
         const phrase = normalizePhrase(message.content);
 
         if (!phrase) return;
-
         if (phrase.length > 100) return;
 
         const words = phrase.split(" ");
@@ -515,23 +447,13 @@ async function startNoiTu(session) {
             return;
         }
 
-        const valid = await checkVietnameseWord(phrase);
+        const valid = checkVietnameseWord(phrase);
 
-        if (valid === null) {
-            await message.react("⚠️").catch(() => {});
-
-            await message.reply(
-                "Không thể kết nối tới các từ điển lúc này. Hãy thử lại."
-            ).catch(() => {});
-
-            return;
-        }
-
-        if (valid === false) {
+        if (!valid) {
             await message.react("❌").catch(() => {});
 
             await resetRound(
-                `Cụm từ **${phrase}** không được tìm thấy trong các từ điển.\n` +
+                `Cụm từ **${phrase}** không hợp lệ hoặc không có trong từ điển.\n` +
                 "Game đang bắt đầu lại."
             );
 
