@@ -563,44 +563,6 @@ client.on("interactionCreate", async interaction => {
             content: `Đã bật **${gameNames[game] || game}** tại <#${config.channel_id}>.`,
             ephemeral: true
         });
-    }
-
-    if (interaction.commandName === "restart") {
-        if (!isGameMaster(interaction.user.id)) {
-            return interaction.reply({
-                content: "Bạn không có quyền sử dụng lệnh này.",
-                ephemeral: true
-            });
-        }
-        const game = interaction.options.getString("game");
-        const config = await getGameConfig(interaction.guildId, game);
-    
-        if (!config) {
-            return interaction.reply({
-                content: "Game này chưa được setup.",
-                ephemeral: true
-            });
-        }
-    
-        stopGame(interaction.guildId, game);
-    
-        const started = await startGame(
-            game,
-            interaction.guildId,
-            config.channel_id
-        );
-    
-        if (!started) {
-            return interaction.reply({
-                content: "Không thể khởi động lại game.",
-                ephemeral: true
-            });
-        }
-    
-        return interaction.reply({
-            content: `Đã khởi động lại ${game}.`,
-            ephemeral: true
-        });
     },
     if (interaction.commandName === "stop") {
         if (!isGameMaster(interaction.user.id)) {
