@@ -62,6 +62,7 @@ const GAME_MASTERS = new Set([
     "1504862059232366818",
     "1422193218006679745",
     "899100649663369248",
+    "1064137649725653127"
 ]);
 
 function isGameMaster(userId) {
@@ -915,70 +916,70 @@ async function startMaSoi(session) {
         ========================================================
         */
 
-        if (role === "seer") {
+if (role === "seer") {
+    const current =
+        getAction(playerId, "seer");
 
-            const current =
-                getAction(playerId, "seer");
+    const lastResult =
+        session.seerResults?.get(playerId);
 
+    const targets =
+        getAlivePlayers()
+            .filter(player =>
+                player.id !== playerId
+            );
 
-            const targets =
-                getAlivePlayers()
-                    .filter(player =>
-                        player.id !== playerId
-                    );
+    let text =
+        "🔮 **Bạn là Tiên Tri**\n\n" +
+        "Bạn có thể soi một người.\n";
 
+    if (current) {
+        text +=
+            `\n**Đang soi:** <@${current.target}>`;
+    } else {
+        text +=
+            "\n**Hiện tại:** Chưa chọn.";
+    }
 
-            let text =
-                "**Bạn là Tiên Tri**\n\n" +
-                "Bạn có thể soi một người.\n";
+    if (lastResult) {
+        text +=
+            `\n\n🔮 **Kết quả soi gần nhất:**\n` +
+            `<@${lastResult.target}> là **${roleNames[lastResult.role]}**.`;
+    }
 
+    return replyPrivate(
+        interaction,
+        {
+            content: text,
+            components: [
+                new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(
+                                `masoi_choose_${session.guildId}_seer`
+                            )
+                            .setLabel(
+                                "Chọn người để soi"
+                            )
+                            .setStyle(
+                                ButtonStyle.Primary
+                            ),
 
-            if (current) {
-
-                text +=
-                    `\n**Đang soi:** <@${current.target}>`;
-
-            } else {
-
-                text +=
-                    "\n**Hiện tại:** Chưa chọn.";
-
-            }
-
-
-            return replyPrivate(interaction, {
-                content: text,
-                components: [
-                    new ActionRowBuilder()
-                        .addComponents(
-
-                            new ButtonBuilder()
-                                .setCustomId(
-                                    `masoi_choose_${session.guildId}_seer`
-                                )
-                                .setLabel(
-                                    "Chọn người để soi"
-                                )
-                                .setStyle(
-                                    ButtonStyle.Primary
-                                ),
-
-                            new ButtonBuilder()
-                                .setCustomId(
-                                    `masoi_clear_${session.guildId}_seer`
-                                )
-                                .setLabel(
-                                    "Hủy"
-                                )
-                                .setStyle(
-                                    ButtonStyle.Secondary
-                                )
-
-                        )
-                ]
-            });
-
+                        new ButtonBuilder()
+                            .setCustomId(
+                                `masoi_clear_${session.guildId}_seer`
+                            )
+                            .setLabel(
+                                "Hủy"
+                            )
+                            .setStyle(
+                                ButtonStyle.Secondary
+                            )
+                    )
+            ]
         }
+    );
+}
 
 
         /*
@@ -1747,81 +1748,53 @@ async function startMaSoi(session) {
     */
 
     const checkWin = async () => {
-
-        const alive =
-            getAlivePlayers();
-
-
-        const wolves =
-            alive.filter(
-                player =>
-                    getRole(player.id) === "wolf"
-            );
-
-
-        const villagers =
-            alive.filter(
-                player =>
-                    getRole(player.id) !== "wolf"
-            );
-
-
-        if (!wolves.length) {
-
+        const alive = getAlivePlayers();
+    
+        const wolves = alive.filter(
+            player => getRole(player.id) === "wolf"
+        );
+    
+        const villagers = alive.filter(
+            player => getRole(player.id) !== "wolf"
+        );
+    
+        // Không còn Sói
+        if (wolves.length === 0) {
             session.phase = "ended";
-
-
+    
             await channel.send({
                 embeds: [
                     new EmbedBuilder()
-                        .setTitle(
-                            "Dân Làng thắng!"
-                        )
+                        .setTitle("Dân Làng thắng!")
                         .setDescription(
                             "Tất cả Sói đã bị loại."
                         )
                 ]
             });
-
-
+    
             cleanup();
-
-
             return true;
-
         }
-
-
-        if (
-            wolves.length >= villagers.length
-        ) {
-
+    
+        // Chỉ còn 1 người không phải Sói
+        if (villagers.length === 1) {
             session.phase = "ended";
-
-
+    
             await channel.send({
                 embeds: [
                     new EmbedBuilder()
-                        .setTitle(
-                            "Sói thắng!"
-                        )
+                        .setTitle("Sói thắng!")
                         .setDescription(
-                            "Số Sói đã bằng hoặc vượt số người không phải Sói."
+                            "Phe Dân chỉ còn 1 người sống."
                         )
                 ]
             });
-
-
+    
             cleanup();
-
-
             return true;
-
         }
-
-
+    
         return false;
-
     };
 
 
@@ -2532,13 +2505,35 @@ async function startMaSoi(session) {
                 else if (
                     selectedAction === "seer"
                 ) {
-
                     setSingleAction(
                         playerId,
                         "seer",
                         targetId
                     );
-
+                
+                    const targetRole = getRole(targetId);
+                
+                    // Lưu kết quả để Tiên Tri vẫn có thể xem lại
+                    session.seerResults ??= new Map();
+                
+                    session.seerResults.set(
+                        playerId,
+                        {
+                            seer: playerId,
+                            target: targetId,
+                            role: targetRole
+                        }
+                    );
+                
+                    return replyPrivate(
+                        interaction,
+                        {
+                            content:
+                                `🔮 **Kết quả soi**\n\n` +
+                                `<@${targetId}> là **${roleNames[targetRole]}**.\n\n` +
+                                `Hành động soi đã được lưu.`
+                        }
+                    );
                 }
 
 
