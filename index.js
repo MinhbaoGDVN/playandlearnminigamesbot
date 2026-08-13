@@ -862,7 +862,7 @@ async function startMaSoi(session) {
                                 `masoi_choose_${session.guildId}_kill`
                             )
                             .setLabel(
-                                "🐺 Chọn người để giết"
+                                "Chọn người để giết"
                             )
                             .setStyle(
                                 ButtonStyle.Danger
@@ -884,7 +884,7 @@ async function startMaSoi(session) {
 
 
             let text =
-                "🐺 **Bạn là Sói**\n\n" +
+                "**Bạn là Sói**\n\n" +
                 "Bạn có thể chọn mục tiêu giết.\n";
 
 
@@ -929,7 +929,7 @@ async function startMaSoi(session) {
 
 
             let text =
-                "🔮 **Bạn là Tiên Tri**\n\n" +
+                "**Bạn là Tiên Tri**\n\n" +
                 "Bạn có thể soi một người.\n";
 
 
@@ -957,7 +957,7 @@ async function startMaSoi(session) {
                                     `masoi_choose_${session.guildId}_seer`
                                 )
                                 .setLabel(
-                                    "🔮 Chọn người để soi"
+                                    "Chọn người để soi"
                                 )
                                 .setStyle(
                                     ButtonStyle.Primary
@@ -998,7 +998,7 @@ async function startMaSoi(session) {
 
 
             let text =
-                "🛡️ **Bạn là Bảo Vệ**\n\n" +
+                "**Bạn là Bảo Vệ**\n\n" +
                 "Bạn có thể bảo vệ một người.\n";
 
 
@@ -1026,7 +1026,7 @@ async function startMaSoi(session) {
                                     `masoi_choose_${session.guildId}_protect`
                                 )
                                 .setLabel(
-                                    "🛡️ Chọn người bảo vệ"
+                                    "Chọn người bảo vệ"
                                 )
                                 .setStyle(
                                     ButtonStyle.Success
@@ -1079,7 +1079,7 @@ async function startMaSoi(session) {
                             .setLabel(
                                 session.witchHealUsed
                                     ? "Thuốc cứu đã dùng"
-                                    : "🧪 Dùng thuốc cứu"
+                                    : "Dùng thuốc cứu"
                             )
                             .setStyle(
                                 ButtonStyle.Success
@@ -1095,7 +1095,7 @@ async function startMaSoi(session) {
                             .setLabel(
                                 session.witchKillUsed
                                     ? "Thuốc độc đã dùng"
-                                    : "☠️ Dùng thuốc độc"
+                                    : "Dùng thuốc độc"
                             )
                             .setStyle(
                                 ButtonStyle.Danger
@@ -1109,7 +1109,7 @@ async function startMaSoi(session) {
 
 
             let text =
-                "🧪 **Bạn là Phù Thủy**\n\n";
+                "**Bạn là Phù Thủy**\n\n";
 
 
             if (heal) {
@@ -1160,7 +1160,7 @@ async function startMaSoi(session) {
 
             return replyPrivate(interaction, {
                 content:
-                    "🏹 **Bạn là Thợ Săn**\n\n" +
+                    "**Bạn là Thợ Săn**\n\n" +
                     "Hiện tại bạn chưa có hành động trong đêm."
             });
 
@@ -1175,7 +1175,7 @@ async function startMaSoi(session) {
 
         return replyPrivate(interaction, {
             content:
-                "👨‍🌾 **Bạn là Dân Làng**\n\n" +
+                "**Bạn là Dân Làng**\n\n" +
                 "Bạn không có kỹ năng đặc biệt trong đêm.\n" +
                 "Hãy chờ đến buổi sáng."
         });
@@ -1347,7 +1347,7 @@ async function startMaSoi(session) {
 
             return replyPrivate(interaction, {
                 content:
-                    `🧪 Bạn đã chọn cứu <@${wolfTarget}>.\n\n` +
+                    `Bạn đã chọn cứu <@${wolfTarget}>.\n\n` +
                     "Hành động đã được lưu."
             });
 
@@ -1651,7 +1651,7 @@ async function startMaSoi(session) {
 
 
         let morningText =
-            `☀️ **Buổi sáng ${session.day + 1}**\n\n`;
+            `**Buổi sáng ${session.day + 1}**\n\n`;
 
 
         if (!deaths.size) {
@@ -1676,7 +1676,7 @@ async function startMaSoi(session) {
             embeds: [
                 new EmbedBuilder()
                     .setTitle(
-                        `☀️ Buổi sáng ${session.day + 1}`
+                        `Buổi sáng ${session.day + 1}`
                     )
                     .setDescription(
                         morningText
@@ -1775,7 +1775,7 @@ async function startMaSoi(session) {
                 embeds: [
                     new EmbedBuilder()
                         .setTitle(
-                            "🏆 Dân Làng thắng!"
+                            "Dân Làng thắng!"
                         )
                         .setDescription(
                             "Tất cả Sói đã bị loại."
@@ -1803,7 +1803,7 @@ async function startMaSoi(session) {
                 embeds: [
                     new EmbedBuilder()
                         .setTitle(
-                            "🐺 Sói thắng!"
+                            "Sói thắng!"
                         )
                         .setDescription(
                             "Số Sói đã bằng hoặc vượt số người không phải Sói."
@@ -1855,7 +1855,7 @@ async function startMaSoi(session) {
             embeds: [
                 new EmbedBuilder()
                     .setTitle(
-                        `🌙 Đêm ${session.night}`
+                        `Đêm ${session.night}`
                     )
                     .setDescription(
                         "Đêm đã bắt đầu.\n\n" +
@@ -1929,7 +1929,7 @@ async function startMaSoi(session) {
             embeds: [
                 new EmbedBuilder()
                     .setTitle(
-                        `☀️ Ngày ${session.day}`
+                        `Ngày ${session.day}`
                     )
                     .setDescription(
                         "Mọi người có thể thảo luận.\n\n" +
@@ -1945,7 +1945,7 @@ async function startMaSoi(session) {
                                 `masoi_voteopen_${session.guildId}`
                             )
                             .setLabel(
-                                "🗳️ Bỏ phiếu"
+                                "Bỏ phiếu"
                             )
                             .setStyle(
                                 ButtonStyle.Primary
@@ -2024,7 +2024,7 @@ async function startMaSoi(session) {
         return replyPrivate(interaction, {
 
             content:
-                "🗳️ **Bỏ phiếu**\n\n" +
+                "**Bỏ phiếu**\n\n" +
                 "Bạn có thể chọn một người hoặc bỏ phiếu trắng.",
 
             components: [
@@ -2087,7 +2087,7 @@ async function startMaSoi(session) {
         if (!counts.size) {
 
             await channel.send(
-                "🗳️ **Kết quả:** Không ai bị loại vì tất cả phiếu đều là phiếu trắng."
+                "**Kết quả:** Không ai bị loại vì tất cả phiếu đều là phiếu trắng."
             );
 
 
@@ -2131,7 +2131,7 @@ async function startMaSoi(session) {
         ) {
 
             await channel.send(
-                `🗳️ **Kết quả:** Hòa phiếu giữa ${winners
+                `**Kết quả:** Hòa phiếu giữa ${winners
                     .map(id => `<@${id}>`)
                     .join(", ")}.\n` +
                 "Không ai bị loại."
@@ -2159,7 +2159,7 @@ async function startMaSoi(session) {
 
 
         await channel.send(
-            `⚖️ <@${eliminated}> đã bị treo cổ.\n` +
+            `<@${eliminated}> đã bị treo cổ.\n` +
             `Vai trò: **${roleNames[role]}**.`
         );
 
@@ -2767,7 +2767,7 @@ async function startMaSoi(session) {
 
                 await interaction.update({
                     content:
-                        `🗳️ Bạn đã bỏ phiếu cho <@${targetId}>.`,
+                        `Bạn đã bỏ phiếu cho <@${targetId}>.`,
                     components: []
                 });
 
@@ -2934,7 +2934,7 @@ async function startMaSoi(session) {
                     embeds: [
                         new EmbedBuilder()
                             .setTitle(
-                                "🐺 Ma Sói bắt đầu!"
+                                "Ma Sói bắt đầu!"
                             )
                             .setDescription(
                                 `Có **${session.players.size} người chơi**.\n\n` +
@@ -3116,7 +3116,7 @@ async function startMaSoi(session) {
         const embed =
             new EmbedBuilder()
                 .setTitle(
-                    "🐺 Ma Sói"
+                    "@here Ma Sói"
                 )
                 .setDescription(
                     `**Game Master:** <@${session.gameMasterId}>\n\n` +
