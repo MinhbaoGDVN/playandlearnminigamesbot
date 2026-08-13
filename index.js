@@ -3112,13 +3112,14 @@ if (role === "seer") {
         const embed =
             new EmbedBuilder()
                 .setTitle(
-                    "@here Ma Sói"
+                    "Ma Sói"
                 )
                 .setDescription(
                     `**Game Master:** <@${session.gameMasterId}>\n\n` +
                     `**Người chơi (${players.length}):**\n` +
                     `${list}\n\n` +
-                    "Cần ít nhất **3 người** để bắt đầu."
+                    `Cần ít nhất **3 người** để bắt đầu.\n` +
+                    `@here`
                 );
 
 
